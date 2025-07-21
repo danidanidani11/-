@@ -147,16 +147,24 @@ def spin_wheel(update: Update, context: CallbackContext):
     result = cursor.fetchone()
     balance = result[0] if result else 0
     
-    if balance < SPIN_COST:
-        query.answer()
-        query.edit_message_text(
-            text=f"💰 موجودی شما کافی نیست!\n\nهزینه هر چرخش: {SPIN_COST} تومان\nموجودی شما: {balance} تومان",
-            def get_balance_keyboard():
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+# تابع ساخت دکمه‌ها
+def get_balance_keyboard():
     reply_markup = InlineKeyboardMarkup([
         [InlineKeyboardButton("افزایش موجودی", callback_data="increase_balance")],
         [InlineKeyboardButton("بازگشت به منوی اصلی", callback_data="main_menu")]
     ])
     return reply_markup
+
+# استفاده از تابع بالا در شرط بررسی موجودی
+if balance < SPIN_COST:
+    await query.answer()
+    await query.edit_message_text(
+        text=f"💰 موجودی شما کافی نیست!\n\nهزینه هر چرخش: {SPIN_COST} تومان\nموجودی شما: {balance} تومان",
+        reply_markup=get_balance_keyboard()
+    )
+    return
     
     # کسر هزینه از موجودی کاربر
     new_balance = balance - SPIN_COST
