@@ -751,10 +751,14 @@ def process_text(update: Update, context: CallbackContext):
         else:
             update.message.reply_text(
                 "لطفاً از منوی ربات استفاده کنید.",
-                reply_markup = InlineKeyboardMarkup([
-    [InlineKeyboardButton("منوی اصلی", callback_data="main_menu")]
-])
-return reply_markup
+                from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+def get_hidden_stage_keyboard():
+    reply_markup = InlineKeyboardMarkup([
+        [InlineKeyboardButton("افزایش موجودی", callback_data="increase_balance")],
+        [InlineKeyboardButton("بازگشت", callback_data="hidden_stage")]
+    ])
+    return reply_markup
 
 if __name__ == '__main__':
     main()
