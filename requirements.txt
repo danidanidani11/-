@@ -1,1 +1,1 @@
-python-telegram-bot==20.3  # نسخه جدیدتر بدون نیاز به کامپایل
+pip install python-telegram-bot==13.7
