@@ -758,6 +758,14 @@ def main():
     updater.start_polling()
     updater.idle()
 
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.ext import CallbackContext
+
+def get_main_menu_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("منوی اصلی", callback_data="main_menu")]
+    ])
+
 def process_text(update: Update, context: CallbackContext):
     if context.user_data.get('waiting_for_code', False):
         process_hidden_code(update, context)
@@ -768,7 +776,8 @@ def process_text(update: Update, context: CallbackContext):
         else:
             update.message.reply_text(
                 "لطفاً از منوی ربات استفاده کنید.",
-                from telegram import InlineKeyboardButton, InlineKeyboardMarkup)
+                reply_markup=get_main_menu_keyboard()
+            )
 
 def get_hidden_stage_keyboard():
     reply_markup = InlineKeyboardMarkup([
