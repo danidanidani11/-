@@ -151,10 +151,10 @@ def spin_wheel(update: Update, context: CallbackContext):
         query.answer()
         query.edit_message_text(
             text=f"💰 موجودی شما کافی نیست!\n\nهزینه هر چرخش: {SPIN_COST} تومان\nموجودی شما: {balance} تومان",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("افزایش موجودی", callback_data="increase_balance")],
-                [InlineKeyboardButton("بازگشت به منوی اصلی", callback_data="main_menu")]
-            )]
+            reply_markup = InlineKeyboardMarkup([
+    [InlineKeyboardButton("افزایش موجودی", callback_data="increase_balance")],
+    [InlineKeyboardButton("بازگشت به منوی اصلی", callback_data="main_menu")]
+])
         return
     
     # کسر هزینه از موجودی کاربر
