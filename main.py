@@ -436,11 +436,7 @@ def buy_hidden_stage(update: Update, context: CallbackContext):
     
     cost = 5000  # 5 هزار تومان
     
-    if balance < cost:
-        query.answer()
-        query.edit_message_text(
-            text=f"💰 موجودی شما کافی نیست!\n\nهزینه خرید مرحله پنهان: {cost} تومان\nموجودی شما: {balance} تومان",
-            from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 def get_hidden_stage_keyboard():
     reply_markup = InlineKeyboardMarkup([
@@ -448,6 +444,19 @@ def get_hidden_stage_keyboard():
         [InlineKeyboardButton("بازگشت", callback_data="hidden_stage")]
     ])
     return reply_markup
+
+
+if balance < cost:
+    await query.answer()
+    await query.edit_message_text(
+        text=(
+            f"💰 موجودی شما کافی نیست!\n\n"
+            f"هزینه خرید مرحله پنهان: {cost} تومان\n"
+            f"موجودی شما: {balance} تومان"
+        ),
+        reply_markup=get_hidden_stage_keyboard()
+    )
+    return
     
     # کسر هزینه از موجودی کاربر
     new_balance = balance - cost
