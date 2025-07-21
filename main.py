@@ -747,10 +747,9 @@ def process_text(update: Update, context: CallbackContext):
         else:
             update.message.reply_text(
                 "لطفاً از منوی ربات استفاده کنید.",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("منوی اصلی", callback_data="main_menu")]
-                )
-            )
+                reply_markup = InlineKeyboardMarkup([
+    [InlineKeyboardButton("منوی اصلی", callback_data="main_menu")]
+])
 
 if __name__ == '__main__':
     main()
