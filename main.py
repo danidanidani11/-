@@ -154,7 +154,7 @@ def spin_wheel(update: Update, context: CallbackContext):
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("افزایش موجودی", callback_data="increase_balance")],
                 [InlineKeyboardButton("بازگشت به منوی اصلی", callback_data="main_menu")]
-            )
+            )]
         )
         return
     
