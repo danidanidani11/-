@@ -1,937 +1,384 @@
-import logging
-import random
-import sqlite3
-from datetime import datetime
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    CallbackQueryHandler,
-    MessageHandler,
-    filters,
-    ContextTypes,
-)
-import asyncio
 import os
-from urllib.parse import urljoin
-import pathlib
+import random
+from flask import Flask, request
+import telebot
+from telebot import types
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-# Logging configuration
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO
-)
-logger = logging.getLogger(__name__)
+TOKEN = '7954708829:AAFg7Mwj5-iGwIsUmfDRr6ZRJZr2jZ28jz0'
+ADMIN_ID = 5542927340
+CHANNEL_USERNAME = 'fromheartsoul'
+PDF_PATH = 'books/hozhin_harman.pdf'
 
-# Bot configuration
-TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '8078210260:AAEX-vz_apP68a6WhzaGhuAKK7amC1qUiEY')
-CHANNEL_USERNAME = '@charkhoun'
-ADMIN_ID = int(os.getenv('ADMIN_ID', 5542927340))
-TRON_ADDRESS = os.getenv('TRON_ADDRESS', 'TJ4xrwKJzKjk6FgKfuuqwah3Az5Ur22kJb')
-SPIN_COST = 50000  # 50,000 toman
-INVITE_REWARD = 2000
-HIDDEN_STAGE_COST = 5000
-HIDDEN_STAGE_REWARD = 50000
-WEBHOOK_URL = os.getenv('WEBHOOK_URL')  # e.g., https://your-app.onrender.com
-WEBHOOK_PATH = '/webhook'
-DB_PATH = os.getenv('DB_PATH', 'wheel_bot.db')  # Fallback to local file for testing
+bot = telebot.TeleBot(TOKEN)
+app = Flask(__name__)
 
-# Ensure database directory exists
-db_dir = os.path.dirname(DB_PATH)
-if db_dir:
-    pathlib.Path(db_dir).mkdir(parents=True, exist_ok=True)
+# User states and data storage
+user_state = {}
+user_balances = {}
+invite_codes = {}
+number_game_data = {}
 
-# Database connection
-conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-cursor = conn.cursor()
-
-# Create necessary tables
-cursor.executescript('''
-CREATE TABLE IF NOT EXISTS users (
-    user_id INTEGER PRIMARY KEY,
-    username TEXT,
-    first_name TEXT,
-    last_name TEXT,
-    balance INTEGER DEFAULT 0,
-    invited_by INTEGER DEFAULT 0,
-    invites_count INTEGER DEFAULT 0,
-    prizes_won TEXT DEFAULT ''
-);
-
-CREATE TABLE IF NOT EXISTS transactions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER,
-    amount INTEGER,
-    type TEXT,
-    status TEXT DEFAULT 'pending',
-    proof TEXT,
-    admin_id INTEGER,
-    timestamp TEXT,
-    FOREIGN KEY(user_id) REFERENCES users(user_id)
-);
-
-CREATE TABLE IF NOT EXISTS prizes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER,
-    prize_type TEXT,
-    prize_value TEXT,
-    status TEXT DEFAULT 'pending',
-    timestamp TEXT,
-    FOREIGN KEY(user_id) REFERENCES users(user_id)
-);
-
-CREATE TABLE IF NOT EXISTS hidden_stage_codes (
-    code TEXT PRIMARY KEY,
-    used INTEGER DEFAULT 0,
-    user_id INTEGER
-);
-
-CREATE TABLE IF NOT EXISTS top_winners (
-    user_id INTEGER,
-    username TEXT,
-    prize TEXT,
-    timestamp TEXT,
-    PRIMARY KEY(user_id, prize)
-);
-
-CREATE TABLE IF NOT EXISTS hidden_game (
-    user_id INTEGER PRIMARY KEY,
-    target_number INTEGER,
-    attempts INTEGER DEFAULT 0
-);
-''')
-conn.commit()
-
-# Define prizes for the wheel
-PRIZES = [
-    {"name": "پوچ", "probability": 70.0, "value": "0"},
-    {"name": "100 هزار تومان", "probability": 3.0, "value": "100000"},
-    {"name": "پریمیوم 3 ماهه تلگرام", "probability": 0.1, "value": "premium"},
-    {"name": "10 میلیون تومان", "probability": 0.01, "value": "10000000"},
-    {"name": "کتاب رایگان", "probability": 5.0, "value": "book"},
-    {"name": "کد ورود به مرحله پنهان", "probability": 21.89, "value": "hidden_stage"}
+# Lottery wheel prizes
+WHEEL_PRIZES = [
+    "10,000 تومان",
+    "20,000 تومان",
+    "30,000 تومان",
+    "40,000 تومان",
+    "50,000 تومان",
+    "100,000 تومان",
+    "200,000 تومان",
+    "500,000 تومان"
 ]
+LOTTERY_COST = 50000  # 50,000 Tomans
 
-# Check channel membership
-async def is_user_member(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    try:
-        member = await context.bot.get_chat_member(CHANNEL_USERNAME, user_id)
-        return member.status in ['member', 'administrator', 'creator']
-    except Exception as e:
-        logger.error(f"Error checking membership: {e}")
-        return False
+# Number game settings
+NUMBER_GAME_COST = 5000  # 5,000 Tomans
+NUMBER_GAME_PRIZE = 50000  # 50,000 Tomans
 
-# Register user if not exists
-def register_user(user_id: int, username: str, first_name: str, last_name: str):
-    try:
-        cursor.execute(
-            "INSERT OR IGNORE INTO users (user_id, username, first_name, last_name) VALUES (?, ?, ?, ?)",
-            (user_id, username, first_name, last_name)
+# Initialize user balances
+def init_user_balance(user_id):
+    if user_id not in user_balances:
+        user_balances[user_id] = 0
+
+# Generate invite code
+def generate_invite_code(user_id):
+    code = str(user_id)[-6:] + str(random.randint(1000, 9999))
+    invite_codes[code] = user_id
+    return code
+
+# --- Inline Keyboards ---
+def get_main_inline_keyboard():
+    markup = InlineKeyboardMarkup()
+    markup.row(
+        InlineKeyboardButton("📖 خرید کتاب", callback_data="buy_book"),
+        InlineKeyboardButton("🎰 چرخش گردونه", callback_data="spin_wheel")
+    )
+    markup.row(
+        InlineKeyboardButton("🔢 بازی عدد", callback_data="number_game"),
+        InlineKeyboardButton("💰 کیف پول", callback_data="wallet")
+    )
+    markup.row(
+        InlineKeyboardButton("📣 دعوت دوستان", callback_data="invite_friends"),
+        InlineKeyboardButton("ℹ️ درباره کتاب", callback_data="about_book")
+    )
+    return markup
+
+def get_wallet_keyboard():
+    markup = InlineKeyboardMarkup()
+    markup.row(
+        InlineKeyboardButton("➕ افزایش موجودی", callback_data="deposit"),
+        InlineKeyboardButton("🎰 چرخش گردونه", callback_data="spin_wheel")
+    )
+    markup.row(
+        InlineKeyboardButton("🔙 بازگشت", callback_data="main_menu")
+    )
+    return markup
+
+def get_number_game_keyboard():
+    markup = InlineKeyboardMarkup()
+    markup.row(
+        InlineKeyboardButton("🔢 حدس بزن", callback_data="guess_number"),
+        InlineKeyboardButton("🔙 بازگشت", callback_data="main_menu")
+    )
+    return markup
+
+# --- Handlers ---
+@bot.message_handler(commands=['start'])
+def start_handler(message):
+    init_user_balance(message.from_user.id)
+    welcome_text = """
+    به ربات فروش کتاب «هوژین و حرمان» خوش آمدید 🌸
+
+    🎰 چرخش گردونه با جایزه تا 500,000 تومان
+    🔢 بازی حدس عدد با جایزه 50,000 تومان
+    📣 دعوت از دوستان و دریافت 2,000 تومان به ازای هر دعوت
+    """
+    bot.send_message(
+        message.chat.id,
+        welcome_text,
+        reply_markup=get_main_inline_keyboard()
+    )
+
+@bot.callback_query_handler(func=lambda call: call.data == "main_menu")
+def main_menu_callback(call):
+    bot.edit_message_text(
+        chat_id=call.message.chat.id,
+        message_id=call.message.message_id,
+        text="منوی اصلی:",
+        reply_markup=get_main_inline_keyboard()
+    )
+
+@bot.callback_query_handler(func=lambda call: call.data == "buy_book")
+def buy_book_callback(call):
+    user_state[call.from_user.id] = 'awaiting_receipt'
+    bot.edit_message_text(
+        chat_id=call.message.chat.id,
+        message_id=call.message.message_id,
+        text="لطفاً رسید پرداخت خود را ارسال کنید (عکس یا متن)."
+    )
+
+@bot.message_handler(content_types=['text', 'photo'], func=lambda msg: user_state.get(msg.from_user.id) == 'awaiting_receipt')
+def handle_receipt(message):
+    user_state.pop(message.from_user.id)
+
+    if message.content_type == 'photo':
+        file_id = message.photo[-1].file_id
+        caption = message.caption or "رسید پرداخت"
+        sent = bot.send_photo(
+            ADMIN_ID, file_id, caption=f"{caption}\n\nاز طرف: {message.from_user.id}"
         )
-        conn.commit()
-    except sqlite3.Error as e:
-        logger.error(f"Database error in register_user: {e}")
-
-# Main menu
-async def main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    user = update.effective_user
-
-    # Register user
-    register_user(user_id, user.username, user.first_name, user.last_name)
-
-    # Check membership
-    if not await is_user_member(user_id, context):
-        keyboard = [
-            [InlineKeyboardButton("عضویت در کانال", url=f"https://t.me/{CHANNEL_USERNAME[1:]}")],
-            [InlineKeyboardButton("بررسی عضویت", callback_data="check_membership")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        text = f"⚠️ برای استفاده از ربات باید در کانال ما عضو شوید:\n{CHANNEL_USERNAME}"
-
-        if update.callback_query:
-            await update.callback_query.edit_message_text(text=text, reply_markup=reply_markup)
-        else:
-            await update.message.reply_text(text=text, reply_markup=reply_markup)
-        return
-
-    keyboard = [
-        [InlineKeyboardButton("چرخوندن گردونه", callback_data="spin_wheel")],
-        [InlineKeyboardButton("موجودی", callback_data="balance")],
-        [InlineKeyboardButton("مرحله پنهان", callback_data="hidden_stage")],
-        [InlineKeyboardButton("خوش شانس‌ترین‌های ماه", callback_data="top_winners")],
-        [InlineKeyboardButton("پروفایل", callback_data="profile")],
-        [InlineKeyboardButton("دعوت دوستان", callback_data="invite_friends")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    text = "🏠 منوی اصلی:"
-    if update.callback_query:
-        await update.callback_query.edit_message_text(text=text, reply_markup=reply_markup)
     else:
-        await update.message.reply_text(text=text, reply_markup=reply_markup)
-
-# Spin the wheel
-async def spin_wheel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    user_id = query.from_user.id
-
-    # Register user
-    register_user(user_id, query.from_user.username, query.from_user.first_name, query.from_user.last_name)
-
-    # Check membership
-    if not await is_user_member(user_id, context):
-        await query.answer("❌ لطفاً ابتدا در کانال عضو شوید!", show_alert=True)
-        await main_menu(update, context)
-        return
-
-    # Check balance
-    try:
-        cursor.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
-        result = cursor.fetchone()
-        balance = result[0] if result else 0
-
-        if balance < SPIN_COST:
-            await query.answer()
-            await query.edit_message_text(
-                text=f"💰 موجودی شما کافی نیست!\n\nهزینه هر چرخش: {SPIN_COST} تومان\nموجودی شما: {balance} تومان",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("افزایش موجودی", callback_data="increase_balance")],
-                    [InlineKeyboardButton("بازگشت به منوی اصلی", callback_data="main_menu")]
-                ])
-            )
-            return
-
-        # Deduct cost
-        new_balance = balance - SPIN_COST
-        cursor.execute("UPDATE users SET balance = ? WHERE user_id = ?",
-                      (new_balance, user_id))
-        conn.commit()
-
-        # Process invites
-        cursor.execute("SELECT invited_by FROM users WHERE user_id = ?", (user_id,))
-        result = cursor.fetchone()
-        invited_by = result[0] if result else 0
-        if invited_by:
-            cursor.execute("UPDATE users SET balance = balance + ?, invites_count = invites_count + 1 WHERE user_id = ?",
-                          (INVITE_REWARD, invited_by))
-            conn.commit()
-            try:
-                await context.bot.send_message(
-                    chat_id=invited_by,
-                    text=f"🎉 کاربری که دعوت کرده‌اید اولین چرخش خود را انجام داد!\n\n💰 شما {INVITE_REWARD} تومان پاداش گرفتید!"
-                )
-            except Exception as e:
-                logger.error(f"Error sending invite reward message: {e}")
-            cursor.execute("UPDATE users SET invited_by = 0 WHERE user_id = ?", (user_id,))
-            conn.commit()
-
-        # Spin the wheel
-        spin_result = random.choices(
-            [prize['value'] for prize in PRIZES],
-            weights=[prize['probability'] for prize in PRIZES],
-            k=1
-        )[0]
-        prize_name = next(prize['name'] for prize in PRIZES if prize['value'] == spin_result)
-
-        # Save prize
-        cursor.execute(
-            "INSERT INTO prizes (user_id, prize_type, prize_value, timestamp) VALUES (?, ?, ?, ?)",
-            (user_id, prize_name, spin_result, datetime.now().isoformat())
+        sent = bot.send_message(
+            ADMIN_ID,
+            f"رسید پرداخت از کاربر {message.from_user.id}:\n\n{message.text}"
         )
-        cursor.execute(
-            "UPDATE users SET prizes_won = prizes_won || ? WHERE user_id = ?",
-            (f"{prize_name}, ", user_id)
-        )
-        conn.commit()
 
-        # Notify admin
-        user = query.from_user
-        admin_message = (
-            f"🎉 کاربر جایزه برده!\n\n"
-            f"👤 کاربر: @{user.username}\n"
-            f"🆔 آیدی: {user.id}\n"
-            f"🏆 جایزه: {prize_name}\n"
-            f"⏰ زمان: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-        )
-        await context.bot.send_message(chat_id=ADMIN_ID, text=admin_message)
-
-        # Respond to user
-        if spin_result == "hidden_stage":
-            hidden_code = ''.join(random.choices('ABCDEFGHJKLMNPQRSTUVWXYZ23456789', k=8))
-            cursor.execute(
-                "INSERT INTO hidden_stage_codes (code, user_id) VALUES (?, ?)",
-                (hidden_code, user_id)
-            )
-            conn.commit()
-            await query.edit_message_text(
-                text=f"🎉 شما جایزه بردید!\n\n🏆 جایزه شما: {prize_name}\n\n🔑 کد شما: {hidden_code}\n\nاین کد را در بخش 'مرحله پنهان' وارد کنید تا به بازی دسترسی پیدا کنید.",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("مرحله پنهان", callback_data="hidden_stage")],
-                    [InlineKeyboardButton("بازگشت به منوی اصلی", callback_data="main_menu")]
-                ])
-            )
-        elif spin_result != "0":
-            await query.edit_message_text(
-                text=f"🎉 شما جایزه بردید!\n\n🏆 جایزه شما: {prize_name}\n\nلطفاً برای دریافت جایزه با ادمین تماس بگیرید.",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("بازگشت به منوی اصلی", callback_data="main_menu")]
-                ])
-            )
-            await context.bot.send_message(
-                chat_id=user_id,
-                text=f"👤 برای دریافت جایزه خود ({prize_name}) لطفاً با ادمین تماس بگیرید: @{CHANNEL_USERNAME[1:]}"
-            )
-        else:
-            await query.edit_message_text(
-                text=f"متأسفیم! این بار جایزه‌ای نبردید.\n\nموجودی جدید شما: {new_balance} تومان",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("چرخش مجدد", callback_data="spin_wheel")],
-                    [InlineKeyboardButton("بازگشت به منوی اصلی", callback_data="main_menu")]
-                ])
-            )
-    except sqlite3.Error as e:
-        logger.error(f"Database error in spin_wheel: {e}")
-        await query.answer("❌ خطایی رخ داد. لطفاً دوباره تلاش کنید.", show_alert=True)
-
-# Show balance
-async def show_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    user_id = query.from_user.id
-
-    # Register user
-    register_user(user_id, query.from_user.username, query.from_user.first_name, query.from_user.last_name)
-
-    try:
-        cursor.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
-        result = cursor.fetchone()
-        balance = result[0] if result else 0
-
-        await query.edit_message_text(
-            text=f"💰 موجودی شما: {balance} تومان",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("افزایش موجودی", callback_data="increase_balance")],
-                [InlineKeyboardButton("بازگشت به منوی اصلی", callback_data="main_menu")]
-            ])
-        )
-    except sqlite3.Error as e:
-        logger.error(f"Database error in show_balance: {e}")
-        await query.answer("❌ خطایی رخ داد. لطفاً دوباره تلاش کنید.", show_alert=True)
-
-# Increase balance
-async def increase_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-
-    keyboard = [
-        [
-            InlineKeyboardButton("10 هزار تومان", callback_data="deposit_10000"),
-            InlineKeyboardButton("30 هزار تومان", callback_data="deposit_30000")
-        ],
-        [
-            InlineKeyboardButton("50 هزار تومان", callback_data="deposit_50000"),
-            InlineKeyboardButton("200 هزار تومان", callback_data="deposit_200000")
-        ],
-        [
-            InlineKeyboardButton("500 هزار تومان", callback_data="deposit_500000"),
-            InlineKeyboardButton("1 میلیون تومان", callback_data="deposit_1000000")
-        ],
-        [InlineKeyboardButton("بازگشت به منوی اصلی", callback_data="main_menu")]
-    ]
-
-    await query.edit_message_text(
-        text=f"💳 لطفاً مبلغ مورد نظر برای افزایش موجودی را انتخاب کنید:\n\n🔹 آدرس ترون: {TRON_ADDRESS}",
-        reply_markup=InlineKeyboardMarkup(keyboard)
+    # Admin approval buttons
+    markup = InlineKeyboardMarkup()
+    markup.add(
+        InlineKeyboardButton("✅ تایید", callback_data=f"approve_{message.from_user.id}"),
+        InlineKeyboardButton("❌ رد", callback_data=f"reject_{message.from_user.id}")
     )
+    bot.send_message(ADMIN_ID, "آیا رسید را تایید می‌کنید؟", reply_markup=markup)
+    bot.send_message(message.chat.id, "رسید شما برای بررسی ارسال شد ✅")
 
-# Request deposit
-async def request_deposit(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    user_id = query.from_user.id
-    amount = int(query.data.split('_')[1])
+@bot.callback_query_handler(func=lambda call: call.data.startswith("approve_") or call.data.startswith("reject_"))
+def handle_approval(call):
+    user_id = int(call.data.split("_")[1])
+    if call.data.startswith("approve_"):
+        bot.send_document(user_id, open(PDF_PATH, "rb"))
+        bot.send_message(user_id, "📘 خرید شما تایید شد. فایل کتاب برایتان ارسال شد.")
+        bot.send_message(ADMIN_ID, f"✅ فایل برای {user_id} ارسال شد.")
+    else:
+        bot.send_message(user_id, "❌ رسید شما رد شد. لطفاً مجدد تلاش کنید.")
+        bot.send_message(ADMIN_ID, f"❌ رسید کاربر {user_id} رد شد.")
+    bot.answer_callback_query(call.id)
 
-    context.user_data['deposit_amount'] = amount
-
-    await query.edit_message_text(
-        text=f"💰 شما مبلغ {amount} تومان را برای افزایش موجودی انتخاب کردید.\n\nلطفاً تصویر یا متن فیش واریزی خود را ارسال کنید.",
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("انصراف", callback_data="balance")]
-        ])
-    )
-
-# Process deposit proof
-async def process_deposit_proof(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    amount = context.user_data.get('deposit_amount', 0)
-
-    if amount == 0:
-        await update.message.reply_text("خطایی رخ داده است. لطفاً دوباره تلاش کنید.")
-        return
-
-    try:
-        proof = update.message.text or "تصویر ارسال شده"
-        cursor.execute(
-            "INSERT INTO transactions (user_id, amount, type, proof, timestamp) VALUES (?, ?, ?, ?, ?)",
-            (user_id, amount, "deposit", proof, datetime.now().isoformat())
-        )
-        conn.commit()
-
-        user = update.message.from_user
-        admin_message = (
-            f"📥 درخواست افزایش موجودی جدید\n\n"
-            f"👤 کاربر: @{user.username}\n"
-            f"🆔 آیدی: {user.id}\n"
-            f"💰 مبلغ: {amount} تومان\n"
-            f"📌 فیش: {proof}\n\n"
-            f"لطفاً تایید یا رد کنید:"
-        )
-
-        keyboard = [
-            [
-                InlineKeyboardButton("✅ تایید", callback_data=f"approve_{user_id}_{amount}"),
-                InlineKeyboardButton("❌ رد", callback_data=f"reject_{user_id}_{amount}")
-            ]
-        ]
-
-        await context.bot.send_message(
-            chat_id=ADMIN_ID,
-            text=admin_message,
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-
-        await update.message.reply_text(
-            text="✅ فیش واریزی شما با موفقیت دریافت شد و برای تایید به ادمین ارسال شد.",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("بازگشت به منوی اصلی", callback_data="main_menu")]
-            ])
-        )
-    except sqlite3.Error as e:
-        logger.error(f"Database error in process_deposit_proof: {e}")
-        await update.message.reply_text("❌ خطایی رخ داد. لطفاً دوباره تلاش کنید.")
-
-# Handle admin decision
-async def handle_admin_decision(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    data = query.data.split('_')
-    action = data[0]
-    user_id = int(data[1])
-    amount = int(data[2])
-
-    try:
-        cursor.execute(
-            "UPDATE transactions SET status = ?, admin_id = ? WHERE user_id = ? AND amount = ? AND status = 'pending'",
-            (action, query.from_user.id, user_id, amount)
-        )
-        conn.commit()
-
-        if action == "approve":
-            cursor.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
-            current_balance = cursor.fetchone()[0] or 0
-            new_balance = current_balance + amount
-
-            cursor.execute(
-                "UPDATE users SET balance = ? WHERE user_id = ?",
-                (new_balance, user_id)
-            )
-            conn.commit()
-
-            await context.bot.send_message(
-                chat_id=user_id,
-                text=f"✅ درخواست افزایش موجودی شما به مبلغ {amount} تومان تأیید شد.\n\n💰 موجودی جدید شما: {new_balance} تومان",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("چرخاندن گردونه", callback_data="spin_wheel")],
-                    [InlineKeyboardButton("منوی اصلی", callback_data="main_menu")]
-                ])
-            )
-            await query.answer("درخواست با موفقیت تایید شد و موجودی کاربر افزایش یافت.")
-        else:
-            await context.bot.send_message(
-                chat_id=user_id,
-                text=f"❌ متأسفانه درخواست افزایش موجودی شما به مبلغ {amount} تومان رد شد.\n\nلطفاً در صورت نیاز با پشتیبانی تماس بگیرید.",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("منوی اصلی", callback_data="main_menu")]
-                ])
-            )
-            await query.answer("درخواست رد شد.")
-
-        await query.edit_message_text(
-            text=query.message.text + f"\n\nوضعیت: {action == 'approve' and 'تایید شد ✅' or 'رد شد ❌'}",
-            reply_markup=None
-        )
-    except sqlite3.Error as e:
-        logger.error(f"Database error in handle_admin_decision: {e}")
-        await query.answer("❌ خطایی رخ داد. لطفاً دوباره تلاش کنید.", show_alert=True)
-
-# Hidden stage menu
-async def hidden_stage_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-
-    keyboard = [
-        [InlineKeyboardButton("شروع بازی", callback_data="start_hidden_game")],
-        [InlineKeyboardButton("خرید مرحله پنهان (5,000 تومان)", callback_data="buy_hidden_stage")],
-        [InlineKeyboardButton("وارد کردن کد ورود", callback_data="enter_hidden_code")],
-        [InlineKeyboardButton("بازگشت به منوی اصلی", callback_data="main_menu")]
-    ]
-
-    await query.edit_message_text(
-        text="🔒 مرحله پنهان:\n\nدر این مرحله می‌توانید با وارد کردن کد صحیح به بازی حدس عدد (1 تا 200) دسترسی پیدا کنید. در صورت حدس درست، 50,000 تومان پاداش می‌گیرید!",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-
-# Buy hidden stage
-async def buy_hidden_stage(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    user_id = query.from_user.id
-
-    # Register user
-    register_user(user_id, query.from_user.username, query.from_user.first_name, query.from_user.last_name)
-
-    try:
-        cursor.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
-        result = cursor.fetchone()
-        balance = result[0] if result else 0
-
-        if balance < HIDDEN_STAGE_COST:
-            await query.answer()
-            await query.edit_message_text(
-                text=f"💰 موجودی شما کافی نیست!\n\nهزینه خرید مرحله پنهان: {HIDDEN_STAGE_COST} تومان\nموجودی شما: {balance} تومان",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("افزایش موجودی", callback_data="increase_balance")],
-                    [InlineKeyboardButton("بازگشت", callback_data="hidden_stage")]
-                ])
-            )
-            return
-
-        new_balance = balance - HIDDEN_STAGE_COST
-        cursor.execute("UPDATE users SET balance = ? WHERE user_id = ?", (new_balance, user_id))
-
-        hidden_code = ''.join(random.choices('ABCDEFGHJKLMNPQRSTUVWXYZ23456789', k=8))
-        cursor.execute(
-            "INSERT INTO hidden_stage_codes (code, user_id) VALUES (?, ?)",
-            (hidden_code, user_id)
-        )
-        conn.commit()
-
-        await query.edit_message_text(
-            text=f"✅ مرحله پنهان با موفقیت خریداری شد!\n\n🔑 کد شما: {hidden_code}\n\n💰 موجودی جدید شما: {new_balance} تومان\n\nلطفاً این کد را در بخش 'وارد کردن کد ورود' وارد کنید تا به بازی دسترسی پیدا کنید.",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("وارد کردن کد", callback_data="enter_hidden_code")],
-                [InlineKeyboardButton("بازگشت", callback_data="hidden_stage")]
-            ])
-        )
-    except sqlite3.Error as e:
-        logger.error(f"Database error in buy_hidden_stage: {e}")
-        await query.answer("❌ خطایی رخ داد. لطفاً دوباره تلاش کنید.", show_alert=True)
-
-# Enter hidden code
-async def enter_hidden_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    user_id = query.from_user.id
-
-    context.user_data['waiting_for_code'] = True
-
-    await query.edit_message_text(
-        text="🔢 لطفاً کد مرحله پنهان خود را وارد کنید تا به بازی دسترسی پیدا کنید:",
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("بازگشت", callback_data="hidden_stage")]
-        ])
-    )
-
-# Process hidden code
-async def process_hidden_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    code = update.message.text.upper().strip()
-
-    if not context.user_data.get('waiting_for_code', False):
-        await update.message.reply_text(
-            text="لطفاً از منوی ربات استفاده کنید.",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("منوی اصلی", callback_data="main_menu")]
-            ])
+@bot.callback_query_handler(func=lambda call: call.data == "spin_wheel")
+def spin_wheel_callback(call):
+    init_user_balance(call.from_user.id)
+    
+    if user_balances[call.from_user.id] < LOTTERY_COST:
+        bot.answer_callback_query(
+            call.id,
+            f"موجودی شما کافی نیست. حداقل موجودی مورد نیاز: {LOTTERY_COST:,} تومان",
+            show_alert=True
         )
         return
+    
+    # Deduct balance
+    user_balances[call.from_user.id] -= LOTTERY_COST
+    
+    # Spin the wheel
+    prize = random.choice(WHEEL_PRIZES)
+    prize_amount = int(prize.split(",")[0].strip(" تومان")) * 1000
+    
+    # Add prize to balance
+    user_balances[call.from_user.id] += prize_amount
+    
+    # Show result
+    result_text = f"""
+    🎉 نتیجه چرخش گردونه 🎉
+    
+    شما برنده {prize} شدید!
+    
+    موجودی فعلی: {user_balances[call.from_user.id]:,} تومان
+    """
+    
+    bot.edit_message_text(
+        chat_id=call.message.chat.id,
+        message_id=call.message.message_id,
+        text=result_text,
+        reply_markup=get_main_inline_keyboard()
+    )
 
-    try:
-        cursor.execute(
-            "SELECT user_id FROM hidden_stage_codes WHERE code = ? AND used = 0",
-            (code,)
-        )
-        result = cursor.fetchone()
+@bot.callback_query_handler(func=lambda call: call.data == "number_game")
+def number_game_callback(call):
+    game_info = """
+    🔢 بازی حدس عدد
+    
+    عددی بین 1 تا 200 انتخاب شده است.
+    اگر عدد را درست حدس بزنید، 50,000 تومان برنده می‌شوید!
+    
+    هزینه ورود: 5,000 تومان
+    """
+    
+    bot.edit_message_text(
+        chat_id=call.message.chat.id,
+        message_id=call.message.message_id,
+        text=game_info,
+        reply_markup=get_number_game_keyboard()
+    )
 
-        if result and result[0] == user_id:
-            cursor.execute(
-                "UPDATE hidden_stage_codes SET used = 1 WHERE code = ?",
-                (code,)
-            )
-            # Start the hidden game
-            target_number = random.randint(1, 200)
-            cursor.execute(
-                "INSERT OR REPLACE INTO hidden_game (user_id, target_number, attempts) VALUES (?, ?, ?)",
-                (user_id, target_number, 0)
-            )
-            conn.commit()
-            context.user_data['waiting_for_guess'] = True
-            context.user_data.pop('waiting_for_code', None)
-
-            await update.message.reply_text(
-                text="✅ کد تأیید شد! حالا بازی حدس عدد شروع می‌شود.\n\n🎲 یک عدد بین 1 تا 200 حدس بزنید:",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("انصراف", callback_data="hidden_stage")]
-                ])
-            )
-        else:
-            await update.message.reply_text(
-                text="❌ کد وارد شده نامعتبر است یا قبلاً استفاده شده است.",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("دوباره امتحان کنید", callback_data="enter_hidden_code")],
-                    [InlineKeyboardButton("منوی اصلی", callback_data="main_menu")]
-                ])
-            )
-    except sqlite3.Error as e:
-        logger.error(f"Database error in process_hidden_code: {e}")
-        await update.message.reply_text("❌ خطایی رخ داد. لطفاً دوباره تلاش کنید.")
-
-# Start hidden game
-async def start_hidden_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    user_id = query.from_user.id
-
-    try:
-        cursor.execute("SELECT target_number FROM hidden_game WHERE user_id = ?", (user_id,))
-        result = cursor.fetchone()
-        if result:
-            context.user_data['waiting_for_guess'] = True
-            await query.edit_message_text(
-                text="🎲 بازی حدس عدد در جریان است!\n\nلطفاً یک عدد بین 1 تا 200 حدس بزنید:",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("انصراف", callback_data="hidden_stage")]
-                ])
-            )
-        else:
-            await query.answer("❌ ابتدا باید کد مرحله پنهان را وارد کنید!", show_alert=True)
-            await hidden_stage_menu(update, context)
-    except sqlite3.Error as e:
-        logger.error(f"Database error in start_hidden_game: {e}")
-        await query.answer("❌ خطایی رخ داد. لطفاً دوباره تلاش کنید.", show_alert=True)
-
-# Process number guess
-async def process_number_guess(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    guess = update.message.text.strip()
-
-    if not context.user_data.get('waiting_for_guess', False):
-        await update.message.reply_text(
-            text="لطفاً از منوی ربات استفاده کنید.",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("منوی اصلی", callback_data="main_menu")]
-            ])
+@bot.callback_query_handler(func=lambda call: call.data == "guess_number")
+def guess_number_callback(call):
+    init_user_balance(call.from_user.id)
+    
+    if user_balances[call.from_user.id] < NUMBER_GAME_COST:
+        bot.answer_callback_query(
+            call.id,
+            f"موجودی شما کافی نیست. حداقل موجودی مورد نیاز: {NUMBER_GAME_COST:,} تومان",
+            show_alert=True
         )
         return
+    
+    # Deduct balance
+    user_balances[call.from_user.id] -= NUMBER_GAME_COST
+    
+    # Generate random number
+    number_game_data[call.from_user.id] = random.randint(1, 200)
+    user_state[call.from_user.id] = 'awaiting_number_guess'
+    
+    bot.edit_message_text(
+        chat_id=call.message.chat.id,
+        message_id=call.message.message_id,
+        text="عدد خود را بین 1 تا 200 وارد کنید:",
+        reply_markup=InlineKeyboardMarkup().add(
+            InlineKeyboardButton("🔙 بازگشت", callback_data="number_game")
+        )
+    )
 
+@bot.message_handler(func=lambda msg: user_state.get(msg.from_user.id) == 'awaiting_number_guess')
+def handle_number_guess(message):
     try:
-        guess = int(guess)
-        if not 1 <= guess <= 200:
-            await update.message.reply_text(
-                text="❌ لطفاً یک عدد بین 1 تا 200 وارد کنید!",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("انصراف", callback_data="hidden_stage")]
-                ])
-            )
+        guess = int(message.text)
+        user_id = message.from_user.id
+        target_number = number_game_data.get(user_id)
+        
+        if not target_number:
+            bot.send_message(message.chat.id, "خطایی رخ داد. لطفاً دوباره شروع کنید.")
             return
-
-        cursor.execute("SELECT target_number, attempts FROM hidden_game WHERE user_id = ?", (user_id,))
-        result = cursor.fetchone()
-        if not result:
-            context.user_data.pop('waiting_for_guess', None)
-            await update.message.reply_text(
-                text="❌ بازی فعال نیست. لطفاً دوباره کد مرحله پنهان را وارد کنید.",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("وارد کردن کد", callback_data="enter_hidden_code")],
-                    [InlineKeyboardButton("منوی اصلی", callback_data="main_menu")]
-                ])
-            )
-            return
-
-        target_number, attempts = result
-        cursor.execute("UPDATE hidden_game SET attempts = ? WHERE user_id = ?", (attempts + 1, user_id))
-        conn.commit()
-
+            
         if guess == target_number:
-            cursor.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
-            current_balance = cursor.fetchone()[0] or 0
-            new_balance = current_balance + HIDDEN_STAGE_REWARD
-
-            cursor.execute("UPDATE users SET balance = ? WHERE user_id = ?", (new_balance, user_id))
-            cursor.execute(
-                "INSERT INTO prizes (user_id, prize_type, prize_value, timestamp) VALUES (?, ?, ?, ?)",
-                (user_id, "پاداش مرحله پنهان", str(HIDDEN_STAGE_REWARD), datetime.now().isoformat())
-            )
-            user = update.message.from_user
-            cursor.execute(
-                "INSERT OR REPLACE INTO top_winners (user_id, username, prize, timestamp) VALUES (?, ?, ?, ?)",
-                (user_id, user.username, f"پاداش مرحله پنهان: {HIDDEN_STAGE_REWARD} تومان", datetime.now().isoformat())
-            )
-            cursor.execute("DELETE FROM hidden_game WHERE user_id = ?", (user_id,))
-            conn.commit()
-
-            context.user_data.pop('waiting_for_guess', None)
-            await update.message.reply_text(
-                text=f"🎉 تبریک! شما عدد درست را حدس زدید!\n\n💰 پاداش: {HIDDEN_STAGE_REWARD} تومان\n💰 موجودی جدید: {new_balance} تومان",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("چرخاندن گردونه", callback_data="spin_wheel")],
-                    [InlineKeyboardButton("مرحله پنهان", callback_data="hidden_stage")],
-                    [InlineKeyboardButton("منوی اصلی", callback_data="main_menu")]
-                ])
-            )
+            # User won
+            user_balances[user_id] += NUMBER_GAME_PRIZE
+            result_text = f"""
+            🎉 تبریک! شما برنده شدید!
+            
+            عدد صحیح: {target_number}
+            جایزه شما: {NUMBER_GAME_PRIZE:,} تومان
+            
+            موجودی فعلی: {user_balances[user_id]:,} تومان
+            """
         else:
-            hint = "بزرگ‌تر" if guess < target_number else "کوچک‌تر"
-            await update.message.reply_text(
-                text=f"❌ عدد شما درست نیست! عدد {hint} را امتحان کنید.\n\nتعداد تلاش‌ها: {attempts + 1}",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("انصراف", callback_data="hidden_stage")]
-                ])
-            )
+            # User lost
+            hint = "بیشتر" if guess < target_number else "کمتر"
+            result_text = f"""
+            ❌ حدس شما اشتباه بود!
+            
+            عدد شما: {guess}
+            عدد صحیح {hint} از این مقدار است.
+            
+            موجودی فعلی: {user_balances[user_id]:,} تومان
+            """
+        
+        bot.send_message(
+            message.chat.id,
+            result_text,
+            reply_markup=get_main_inline_keyboard()
+        )
+        user_state.pop(user_id)
+        
     except ValueError:
-        await update.message.reply_text(
-            text="❌ لطفاً یک عدد معتبر وارد کنید!",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("انصراف", callback_data="hidden_stage")]
-            ])
-        )
-    except sqlite3.Error as e:
-        logger.error(f"Database error in process_number_guess: {e}")
-        await update.message.reply_text("❌ خطایی رخ داد. لطفاً دوباره تلاش کنید.")
+        bot.send_message(message.chat.id, "لطفاً یک عدد معتبر وارد کنید!")
 
-# Show top winners
-async def show_top_winners(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-
-    try:
-        cursor.execute(
-            "SELECT username, prize FROM top_winners ORDER BY timestamp DESC LIMIT 10"
-        )
-        winners = cursor.fetchall()
-
-        text = "🏆 خوش شانس‌ترین‌های ماه:\n\n" if winners else "هنوز برنده‌ای ثبت نشده است."
-        for i, (username, prize) in enumerate(winners, 1):
-            text += f"{i}. @{username} - {prize}\n"
-
-        await query.edit_message_text(
-            text=text,
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("بازگشت به منوی اصلی", callback_data="main_menu")]
-            ])
-        )
-    except sqlite3.Error as e:
-        logger.error(f"Database error in show_top_winners: {e}")
-        await query.answer("❌ خطایی رخ داد. لطفاً دوباره تلاش کنید.", show_alert=True)
-
-# Show profile
-async def show_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    user_id = query.from_user.id
-
-    # Register user
-    register_user(user_id, query.from_user.username, query.from_user.first_name, query.from_user.last_name)
-
-    try:
-        cursor.execute(
-            "SELECT balance, invites_count, prizes_won FROM users WHERE user_id = ?",
-            (user_id,)
-        )
-        result = cursor.fetchone()
-
-        balance, invites_count, prizes_won = result if result else (0, 0, "هنوز جایزه‌ای نبرده‌اید")
-        prizes_won = prizes_won or "هنوز جایزه‌ای نبرده‌اید"
-
-        text = (
-            f"👤 پروفایل شما:\n\n"
-            f"💰 موجودی: {balance} تومان\n"
-            f"👥 تعداد دعوت شده‌ها: {invites_count} نفر\n"
-            f"🎁 جوایز برده شده:\n{prizes_won}"
-        )
-
-        await query.edit_message_text(
-            text=text,
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("بازگشت به منوی اصلی", callback_data="main_menu")]
-            ])
-        )
-    except sqlite3.Error as e:
-        logger.error(f"Database error in show_profile: {e}")
-        await query.answer("❌ خطایی رخ داد. لطفاً دوباره تلاش کنید.", show_alert=True)
-
-# Invite friends
-async def invite_friends(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    user_id = query.from_user.id
-
-    invite_link = f"https://t.me/{context.bot.username}?start=invite_{user_id}"
-
-    text = (
-        f"👥 دعوت از دوستان\n\n"
-        f"با هر دعوت موفق {INVITE_REWARD} تومان پاداش بگیرید!\n\n"
-        f"🔗 لینک اختصاصی شما:\n{invite_link}"
+@bot.callback_query_handler(func=lambda call: call.data == "invite_friends")
+def invite_friends_callback(call):
+    invite_code = generate_invite_code(call.from_user.id)
+    invite_link = f"https://t.me/{bot.get_me().username}?start={invite_code}"
+    
+    invite_text = f"""
+    📣 دعوت از دوستان
+    
+    با دعوت هر دوست 2,000 تومان جایزه بگیرید!
+    
+    لینک دعوت شما:
+    {invite_link}
+    """
+    
+    bot.edit_message_text(
+        chat_id=call.message.chat.id,
+        message_id=call.message.message_id,
+        text=invite_text,
+        reply_markup=get_main_inline_keyboard()
     )
 
-    await query.edit_message_text(
-        text=text,
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("بازگشت به منوی اصلی", callback_data="main_menu")]
-        ])
+@bot.callback_query_handler(func=lambda call: call.data == "wallet")
+def wallet_callback(call):
+    init_user_balance(call.from_user.id)
+    wallet_text = f"""
+    💰 کیف پول شما
+    
+    موجودی: {user_balances[call.from_user.id]:,} تومان
+    
+    هزینه چرخش گردونه: {LOTTERY_COST:,} تومان
+    هزینه بازی عدد: {NUMBER_GAME_COST:,} تومان
+    """
+    
+    bot.edit_message_text(
+        chat_id=call.message.chat.id,
+        message_id=call.message.message_id,
+        text=wallet_text,
+        reply_markup=get_wallet_keyboard()
     )
 
-# Process invite
-async def process_invite(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    args = context.args
+@bot.callback_query_handler(func=lambda call: call.data == "about_book")
+def about_book_callback(call):
+    about_text = """
+    📖 درباره کتاب هوژین و حرمان
+    
+    رمان هوژین و حرمان روایتی عاشقانه است که تلفیقی از سبک سورئالیسم، رئالیسم و روان است.
+    
+    نام هوژین واژه ای کردی است که به معنای کسی است که با آمدنش نور زندگی شما میشود.
+    حرمان نیز به معنای کسی است که بالاترین حد اندوه را تجربه کرده است.
+    """
+    
+    bot.edit_message_text(
+        chat_id=call.message.chat.id,
+        message_id=call.message.message_id,
+        text=about_text,
+        reply_markup=get_main_inline_keyboard()
+    )
 
-    if args and args[0].startswith('invite_'):
-        inviter_id = int(args[0].split('_')[1])
-
-        try:
-            cursor.execute("SELECT invited_by FROM users WHERE user_id = ?", (user_id,))
-            result = cursor.fetchone()
-
-            if not result or result[0] == 0:
-                cursor.execute(
-                    "INSERT OR IGNORE INTO users (user_id, invited_by) VALUES (?, ?)",
-                    (user_id, inviter_id)
-                )
-                cursor.execute(
-                    "UPDATE users SET invited_by = ? WHERE user_id = ? AND invited_by = 0",
-                    (inviter_id, user_id)
-                )
-                conn.commit()
-        except sqlite3.Error as e:
-            logger.error(f"Database error in process_invite: {e}")
-
-# Start command
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    register_user(user.id, user.username, user.first_name, user.last_name)
-
-    if context.args:
-        await process_invite(update, context)
-
-    await main_menu(update, context)
-
-# Show menu command
-async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await main_menu(update, context)
-
-# Check membership
-async def check_membership(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    user_id = query.from_user.id
-
-    if await is_user_member(user_id, context):
-        await query.answer("✅ شما عضو کانال هستید. لطفاً از منوی ربات استفاده کنید.")
-        await main_menu(update, context)
-    else:
-        await query.answer("❌ شما هنوز عضو کانال نشده‌اید!", show_alert=True)
-
-# Process text messages
-async def process_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if context.user_data.get('waiting_for_code', False):
-        await process_hidden_code(update, context)
-    elif context.user_data.get('waiting_for_guess', False):
-        await process_number_guess(update, context)
-    elif 'deposit_amount' in context.user_data:
-        await process_deposit_proof(update, context)
-    else:
-        await update.message.reply_text(
-            text="لطفاً از منوی ربات استفاده کنید.",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("منوی اصلی", callback_data="main_menu")]
-            ])
+# Handle new users coming from invite links
+@bot.message_handler(func=lambda msg: len(msg.text.split()) > 1 and msg.text.split()[1] in invite_codes)
+def handle_invited_user(message):
+    invite_code = message.text.split()[1]
+    referrer_id = invite_codes.get(invite_code)
+    
+    if referrer_id and referrer_id != message.from_user.id:
+        # Add bonus to referrer
+        init_user_balance(referrer_id)
+        user_balances[referrer_id] += 2000
+        
+        # Notify both users
+        bot.send_message(
+            referrer_id,
+            f"✅ کاربر جدید با لینک دعوت شما وارد شد! 2,000 تومان به حساب شما اضافه شد."
         )
+    
+    # Send welcome message
+    start_handler(message)
 
-# Webhook handler
-async def webhook(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await context.application.process_update(update)
+# --- Flask Webhook ---
+@app.route('/', methods=["POST"])
+def webhook():
+    if request.headers.get('content-type') == 'application/json':
+        json_string = request.get_data().decode('utf-8')
+        update = telebot.types.Update.de_json(json_string)
+        bot.process_new_updates([update])
+        return '', 200
+    return '', 403
 
-# Main function
-async def main():
-    # Create the Application
-    application = Application.builder().token(TOKEN).build()
-
-    # Commands
-    application.add_handler(CommandHandler('start', start))
-    application.add_handler(CommandHandler('menu', show_menu))
-
-    # Message handlers
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, process_text))
-    application.add_handler(MessageHandler(filters.PHOTO | filters.Document.ALL, process_deposit_proof))
-
-    # Callback handlers
-    application.add_handler(CallbackQueryHandler(main_menu, pattern='^main_menu$'))
-    application.add_handler(CallbackQueryHandler(spin_wheel, pattern='^spin_wheel$'))
-    application.add_handler(CallbackQueryHandler(show_balance, pattern='^balance$'))
-    application.add_handler(CallbackQueryHandler(increase_balance, pattern='^increase_balance$'))
-    application.add_handler(CallbackQueryHandler(request_deposit, pattern='^deposit_'))
-    application.add_handler(CallbackQueryHandler(handle_admin_decision, pattern='^(approve|reject)_'))
-    application.add_handler(CallbackQueryHandler(hidden_stage_menu, pattern='^hidden_stage$'))
-    application.add_handler(CallbackQueryHandler(buy_hidden_stage, pattern='^buy_hidden_stage$'))
-    application.add_handler(CallbackQueryHandler(enter_hidden_code, pattern='^enter_hidden_code$'))
-    application.add_handler(CallbackQueryHandler(start_hidden_game, pattern='^start_hidden_game$'))
-    application.add_handler(CallbackQueryHandler(show_top_winners, pattern='^top_winners$'))
-    application.add_handler(CallbackQueryHandler(show_profile, pattern='^profile$'))
-    application.add_handler(CallbackQueryHandler(invite_friends, pattern='^invite_friends$'))
-    application.add_handler(CallbackQueryHandler(check_membership, pattern='^check_membership$'))
-
-    # Initialize and set webhook
-    await application.initialize()
-    await application.start()
-    if WEBHOOK_URL:
-        await application.bot.set_webhook(url=urljoin(WEBHOOK_URL, WEBHOOK_PATH))
-        logger.info(f"Webhook set to {urljoin(WEBHOOK_URL, WEBHOOK_PATH)}")
-    else:
-        logger.warning("WEBHOOK_URL not set, falling back to polling")
-        await application.updater.start_polling(allowed_updates=Update.ALL_TYPES)
-
-    # Keep the application running
-    try:
-        while True:
-            await asyncio.sleep(3600)  # Sleep for an hour
-    except KeyboardInterrupt:
-        if WEBHOOK_URL:
-            await application.bot.delete_webhook()
-        await application.updater.stop()
-        await application.stop()
-        await application.shutdown()
+@app.route('/')
+def index():
+    return "ربات فعال است."
 
 if __name__ == '__main__':
-    import uvicorn
-    from fastapi import FastAPI, Request, HTTPException
-
-    app = FastAPI()
-
-    # Webhook endpoint
-    @app.post(WEBHOOK_PATH)
-    async def webhook_endpoint(request: Request):
-        update = Update.de_json(await request.json(), None)
-        if update:
-            await webhook(update, ContextTypes.DEFAULT_TYPE()._replace(application=app.state.application))
-        else:
-            raise HTTPException(status_code=400, message="Invalid update")
-        return {"status": "ok"}
-
-    # Initialize application
-    async def init_application():
-        app.state.application = Application.builder().token(TOKEN).build()
-        await main()
-
-    # Start the server
-    loop = asyncio.get_event_loop()
-    try:
-        if loop.is_running():
-            loop.create_task(init_application())
-        else:
-            loop.run_until_complete(init_application())
-        if WEBHOOK_URL:
-            uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
-        else:
-            loop.run_until_complete(main())
-    except RuntimeError as e:
-        logger.error(f"Event loop error: {e}")
-    finally:
-        conn.close()
+    # Remove any existing webhook and set new one
+    bot.remove_webhook()
+    bot.set_webhook(url='https://hozhin.onrender.com/' + TOKEN)
+    
+    # Start Flask app
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
