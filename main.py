@@ -11,6 +11,7 @@ from telegram.ext import (
     filters,
     ContextTypes,
 )
+import asyncio
 
 # Logging configuration
 logging.basicConfig(
@@ -742,6 +743,7 @@ async def process_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # Main function
 async def main():
+    # Create the Application
     application = Application.builder().token(TOKEN).build()
 
     # Commands
@@ -767,9 +769,34 @@ async def main():
     application.add_handler(CallbackQueryHandler(invite_friends, pattern='^invite_friends$'))
     application.add_handler(CallbackQueryHandler(check_membership, pattern='^check_membership$'))
 
-    # Start bot
-    await application.run_polling()
+    # Initialize and run the application
+    await application.initialize()
+    await application.start()
+    await application.updater.start_polling(allowed_updates=Update.ALL_TYPES)
+
+    # Keep the application running
+    try:
+        # Use an async sleep to keep the application running
+        while True:
+            await asyncio.sleep(3600)  # Sleep for an hour, effectively keeping the bot running
+    except KeyboardInterrupt:
+        # Graceful shutdown on interruption
+        await application.updater.stop()
+        await application.stop()
+        await application.shutdown()
 
 if __name__ == '__main__':
-    import asyncio
-    asyncio.run(main())
+    # Use the existing event loop instead of asyncio.run()
+    loop = asyncio.get_event_loop()
+    try:
+        if loop.is_running():
+            # If an event loop is already running, create a task
+            loop.create_task(main())
+        else:
+            # Otherwise, run the main coroutine
+            loop.run_until_complete(main())
+    except RuntimeError as e:
+        logger.error(f"Event loop error: {e}")
+    finally:
+        # Ensure the database connection is closed
+        conn.close()
