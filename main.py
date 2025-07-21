@@ -1,7 +1,7 @@
 import logging
 import random
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     Application,
@@ -12,6 +12,8 @@ from telegram.ext import (
     ContextTypes,
 )
 import asyncio
+import os
+from urllib.parse import urljoin
 
 # Logging configuration
 logging.basicConfig(
@@ -20,18 +22,19 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Bot configuration
-TOKEN = '8078210260:AAEX-vz_apP68a6WhzaGhuAKK7amC1qUiEY'
+TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '8078210260:AAEX-vz_apP68a6WhzaGhuAKK7amC1qUiEY')
 CHANNEL_USERNAME = '@charkhoun'
-ADMIN_ID = 5542927340
-TRON_ADDRESS = 'TJ4xrwKJzKjk6FgKfuuqwah3Az5Ur22kJb'
-SPIN_COST = 50
-SPIN_COOLDOWN_HOURS = 24
+ADMIN_ID = int(os.getenv('ADMIN_ID', 5542927340))
+TRON_ADDRESS = os.getenv('TRON_ADDRESS', 'TJ4xrwKJzKjk6FgKfuuqwah3Az5Ur22kJb')
+SPIN_COST = 50000  # Updated to 50,000 toman
 INVITE_REWARD = 2000
 HIDDEN_STAGE_COST = 5000
 HIDDEN_STAGE_REWARD = 50000
+WEBHOOK_URL = os.getenv('WEBHOOK_URL')  # Set in Render environment, e.g., https://your-app.onrender.com/webhook
+WEBHOOK_PATH = '/webhook'
 
 # Database connection
-conn = sqlite3.connect('wheel_bot.db', check_same_thread=False)
+conn = sqlite3.connect('/path/to/persistent/disk/wheel_bot.db', check_same_thread=False)  # Update path for Render
 cursor = conn.cursor()
 
 # Create necessary tables
@@ -44,8 +47,7 @@ CREATE TABLE IF NOT EXISTS users (
     balance INTEGER DEFAULT 0,
     invited_by INTEGER DEFAULT 0,
     invites_count INTEGER DEFAULT 0,
-    prizes_won TEXT DEFAULT '',
-    last_spin_time TEXT
+    prizes_won TEXT DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS transactions (
@@ -82,6 +84,12 @@ CREATE TABLE IF NOT EXISTS top_winners (
     prize TEXT,
     timestamp TEXT,
     PRIMARY KEY(user_id, prize)
+);
+
+CREATE TABLE IF NOT EXISTS hidden_game (
+    user_id INTEGER PRIMARY KEY,
+    target_number INTEGER,
+    attempts INTEGER DEFAULT 0
 );
 ''')
 conn.commit()
@@ -171,18 +179,9 @@ async def spin_wheel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Check balance
     try:
-        cursor.execute("SELECT balance, last_spin_time FROM users WHERE user_id = ?", (user_id,))
+        cursor.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
         result = cursor.fetchone()
         balance = result[0] if result else 0
-        last_spin_time = result[1] if result else None
-
-        # Check cooldown
-        if last_spin_time:
-            last_spin = datetime.fromisoformat(last_spin_time)
-            if datetime.now() < last_spin + timedelta(hours=SPIN_COOLDOWN_HOURS):
-                remaining_time = (last_spin + timedelta(hours=SPIN_COOLDOWN_HOURS) - datetime.now()).total_seconds() / 3600
-                await query.answer(f"⏳ لطفاً {remaining_time:.1f} ساعت دیگر برای چرخش بعدی صبر کنید!", show_alert=True)
-                return
 
         if balance < SPIN_COST:
             await query.answer()
@@ -197,8 +196,8 @@ async def spin_wheel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # Deduct cost
         new_balance = balance - SPIN_COST
-        cursor.execute("UPDATE users SET balance = ?, last_spin_time = ? WHERE user_id = ?",
-                      (new_balance, datetime.now().isoformat(), user_id))
+        cursor.execute("UPDATE users SET balance = ? WHERE user_id = ?",
+                      (new_balance, user_id))
         conn.commit()
 
         # Process invites
@@ -258,7 +257,7 @@ async def spin_wheel(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             conn.commit()
             await query.edit_message_text(
-                text=f"🎉 شما جایزه بردید!\n\n🏆 جایزه شما: {prize_name}\n\n🔑 کد شما: {hidden_code}\n\nاین کد را در بخش 'مرحله پنهان' وارد کنید.",
+                text=f"🎉 شما جایزه بردید!\n\n🏆 جایزه شما: {prize_name}\n\n🔑 کد شما: {hidden_code}\n\nاین کد را در بخش 'مرحله پنهان' وارد کنید تا به بازی دسترسی پیدا کنید.",
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton("مرحله پنهان", callback_data="hidden_stage")],
                     [InlineKeyboardButton("بازگشت به منوی اصلی", callback_data="main_menu")]
@@ -466,7 +465,7 @@ async def hidden_stage_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
 
     await query.edit_message_text(
-        text="🔒 مرحله پنهان:\n\nدر این مرحله می‌توانید با وارد کردن کد صحیح، 50 هزار تومان پاداش بگیرید!\n\n💰 پاداش: 50,000 تومان + 1 چرخش رایگان",
+        text="🔒 مرحله پنهان:\n\nدر این مرحله می‌توانید با وارد کردن کد صحیح به بازی حدس عدد (1 تا 200) دسترسی پیدا کنید. در صورت حدس درست، 50,000 تومان پاداش می‌گیرید!",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
@@ -505,7 +504,7 @@ async def buy_hidden_stage(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.commit()
 
         await query.edit_message_text(
-            text=f"✅ مرحله پنهان با موفقیت خریداری شد!\n\n🔑 کد شما: {hidden_code}\n\n💰 موجودی جدید شما: {new_balance} تومان\n\nلطفاً این کد را در بخش 'وارد کردن کد ورود' وارد کنید.",
+            text=f"✅ مرحله پنهان با موفقیت خریداری شد!\n\n🔑 کد شما: {hidden_code}\n\n💰 موجودی جدید شما: {new_balance} تومان\n\nلطفاً این کد را در بخش 'وارد کردن کد ورود' وارد کنید تا به بازی دسترسی پیدا کنید.",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("وارد کردن کد", callback_data="enter_hidden_code")],
                 [InlineKeyboardButton("بازگشت", callback_data="hidden_stage")]
@@ -523,7 +522,7 @@ async def enter_hidden_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['waiting_for_code'] = True
 
     await query.edit_message_text(
-        text="🔢 لطفاً کد مرحله پنهان خود را وارد کنید:",
+        text="🔢 لطفاً کد مرحله پنهان خود را وارد کنید تا به بازی دسترسی پیدا کنید:",
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("بازگشت", callback_data="hidden_stage")]
         ])
@@ -555,36 +554,22 @@ async def process_hidden_code(update: Update, context: ContextTypes.DEFAULT_TYPE
                 "UPDATE hidden_stage_codes SET used = 1 WHERE code = ?",
                 (code,)
             )
-
-            cursor.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
-            current_balance = cursor.fetchone()[0] or 0
-            new_balance = current_balance + HIDDEN_STAGE_REWARD
-
+            # Start the hidden game
+            target_number = random.randint(1, 200)
             cursor.execute(
-                "UPDATE users SET balance = ? WHERE user_id = ?",
-                (new_balance, user_id)
-            )
-
-            cursor.execute(
-                "INSERT INTO prizes (user_id, prize_type, prize_value, timestamp) VALUES (?, ?, ?, ?)",
-                (user_id, "پاداش مرحله پنهان", str(HIDDEN_STAGE_REWARD), datetime.now().isoformat())
-            )
-
-            user = update.message.from_user
-            cursor.execute(
-                "INSERT OR REPLACE INTO top_winners (user_id, username, prize, timestamp) VALUES (?, ?, ?, ?)",
-                (user_id, user.username, f"پاداش مرحله پنهان: {HIDDEN_STAGE_REWARD} تومان", datetime.now().isoformat())
+                "INSERT OR REPLACE INTO hidden_game (user_id, target_number, attempts) VALUES (?, ?, ?)",
+                (user_id, target_number, 0)
             )
             conn.commit()
+            context.user_data['waiting_for_guess'] = True
+            context.user_data.pop('waiting_for_code', None)
 
             await update.message.reply_text(
-                text=f"✅ کد تایید شد!\n\n💰 شما {HIDDEN_STAGE_REWARD} تومان پاداش گرفتید!\n\n🎁 همچنین یک چرخش رایگان دریافت کردید!",
+                text="✅ کد تأیید شد! حالا بازی حدس عدد شروع می‌شود.\n\n🎲 یک عدد بین 1 تا 200 حدس بزنید:",
                 reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("چرخش رایگان", callback_data="spin_wheel")],
-                    [InlineKeyboardButton("منوی اصلی", callback_data="main_menu")]
+                    [InlineKeyboardButton("انصراف", callback_data="hidden_stage")]
                 ])
             )
-            context.user_data.pop('waiting_for_code', None)
         else:
             await update.message.reply_text(
                 text="❌ کد وارد شده نامعتبر است یا قبلاً استفاده شده است.",
@@ -595,6 +580,117 @@ async def process_hidden_code(update: Update, context: ContextTypes.DEFAULT_TYPE
             )
     except sqlite3.Error as e:
         logger.error(f"Database error in process_hidden_code: {e}")
+        await update.message.reply_text("❌ خطایی رخ داد. لطفاً دوباره تلاش کنید.")
+
+# Start hidden game
+async def start_hidden_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+
+    try:
+        cursor.execute("SELECT target_number FROM hidden_game WHERE user_id = ?", (user_id,))
+        result = cursor.fetchone()
+        if result:
+            context.user_data['waiting_for_guess'] = True
+            await query.edit_message_text(
+                text="🎲 بازی حدس عدد در جریان است!\n\nلطفاً یک عدد بین 1 تا 200 حدس بزنید:",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("انصراف", callback_data="hidden_stage")]
+                ])
+            )
+        else:
+            await query.answer("❌ ابتدا باید کد مرحله پنهان را وارد کنید!", show_alert=True)
+            await hidden_stage_menu(update, context)
+    except sqlite3.Error as e:
+        logger.error(f"Database error in start_hidden_game: {e}")
+        await query.answer("❌ خطایی رخ داد. لطفاً دوباره تلاش کنید.", show_alert=True)
+
+# Process number guess
+async def process_number_guess(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    guess = update.message.text.strip()
+
+    if not context.user_data.get('waiting_for_guess', False):
+        await update.message.reply_text(
+            text="لطفاً از منوی ربات استفاده کنید.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("منوی اصلی", callback_data="main_menu")]
+            ])
+        )
+        return
+
+    try:
+        guess = int(guess)
+        if not 1 <= guess <= 200:
+            await update.message.reply_text(
+                text="❌ لطفاً یک عدد بین 1 تا 200 وارد کنید!",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("انصراف", callback_data="hidden_stage")]
+                ])
+            )
+            return
+
+        cursor.execute("SELECT target_number, attempts FROM hidden_game WHERE user_id = ?", (user_id,))
+        result = cursor.fetchone()
+        if not result:
+            context.user_data.pop('waiting_for_guess', None)
+            await update.message.reply_text(
+                text="❌ بازی فعال نیست. لطفاً دوباره کد مرحله پنهان را وارد کنید.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("وارد کردن کد", callback_data="enter_hidden_code")],
+                    [InlineKeyboardButton("منوی اصلی", callback_data="main_menu")]
+                ])
+            )
+            return
+
+        target_number, attempts = result
+        cursor.execute("UPDATE hidden_game SET attempts = ? WHERE user_id = ?", (attempts + 1, user_id))
+        conn.commit()
+
+        if guess == target_number:
+            cursor.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
+            current_balance = cursor.fetchone()[0] or 0
+            new_balance = current_balance + HIDDEN_STAGE_REWARD
+
+            cursor.execute("UPDATE users SET balance = ? WHERE user_id = ?", (new_balance, user_id))
+            cursor.execute(
+                "INSERT INTO prizes (user_id, prize_type, prize_value, timestamp) VALUES (?, ?, ?, ?)",
+                (user_id, "پاداش مرحله پنهان", str(HIDDEN_STAGE_REWARD), datetime.now().isoformat())
+            )
+            user = update.message.from_user
+            cursor.execute(
+                "INSERT OR REPLACE INTO top_winners (user_id, username, prize, timestamp) VALUES (?, ?, ?, ?)",
+                (user_id, user.username, f"پاداش مرحله پنهان: {HIDDEN_STAGE_REWARD} تومان", datetime.now().isoformat())
+            )
+            cursor.execute("DELETE FROM hidden_game WHERE user_id = ?", (user_id,))
+            conn.commit()
+
+            context.user_data.pop('waiting_for_guess', None)
+            await update.message.reply_text(
+                text=f"🎉 تبریک! شما عدد درست را حدس زدید!\n\n💰 پاداش: {HIDDEN_STAGE_REWARD} تومان\n💰 موجودی جدید: {new_balance} تومان",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("چرخاندن گردونه", callback_data="spin_wheel")],
+                    [InlineKeyboardButton("مرحله پنهان", callback_data="hidden_stage")],
+                    [InlineKeyboardButton("منوی اصلی", callback_data="main_menu")]
+                ])
+            )
+        else:
+            hint = "بزرگ‌تر" if guess < target_number else "کوچک‌تر"
+            await update.message.reply_text(
+                text=f"❌ عدد شما درست نیست! عدد {hint} را امتحان کنید.\n\nتعداد تلاش‌ها: {attempts + 1}",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("انصراف", callback_data="hidden_stage")]
+                ])
+            )
+    except ValueError:
+        await update.message.reply_text(
+            text="❌ لطفاً یک عدد معتبر وارد کنید!",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("انصراف", callback_data="hidden_stage")]
+            ])
+        )
+    except sqlite3.Error as e:
+        logger.error(f"Database error in process_number_guess: {e}")
         await update.message.reply_text("❌ خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
 # Show top winners
@@ -666,8 +762,7 @@ async def invite_friends(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
         f"👥 دعوت از دوستان\n\n"
         f"با هر دعوت موفق {INVITE_REWARD} تومان پاداش بگیرید!\n\n"
-        f"🔗 لینک اختصاصی شما:\n{invite_link}\n\n"
-        f"📌 این لینک را برای دوستان خود ارسال کنید و زمانی که آنها با این لینک وارد ربات شوند و اولین چرخش را انجام دهند، شما پاداش می‌گیرید!"
+        f"🔗 لینک اختصاصی شما:\n{invite_link}"
     )
 
     await query.edit_message_text(
@@ -731,6 +826,8 @@ async def check_membership(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def process_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.user_data.get('waiting_for_code', False):
         await process_hidden_code(update, context)
+    elif context.user_data.get('waiting_for_guess', False):
+        await process_number_guess(update, context)
     elif 'deposit_amount' in context.user_data:
         await process_deposit_proof(update, context)
     else:
@@ -741,9 +838,13 @@ async def process_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ])
         )
 
+# Webhook handler (for Render)
+async def webhook(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await context.application.process_update(update)
+
 # Main function
 async def main():
-    # Create the Application
+    # Create the Application with webhook support
     application = Application.builder().token(TOKEN).build()
 
     # Commands
@@ -764,39 +865,67 @@ async def main():
     application.add_handler(CallbackQueryHandler(hidden_stage_menu, pattern='^hidden_stage$'))
     application.add_handler(CallbackQueryHandler(buy_hidden_stage, pattern='^buy_hidden_stage$'))
     application.add_handler(CallbackQueryHandler(enter_hidden_code, pattern='^enter_hidden_code$'))
+    application.add_handler(CallbackQueryHandler(start_hidden_game, pattern='^start_hidden_game$'))
     application.add_handler(CallbackQueryHandler(show_top_winners, pattern='^top_winners$'))
     application.add_handler(CallbackQueryHandler(show_profile, pattern='^profile$'))
     application.add_handler(CallbackQueryHandler(invite_friends, pattern='^invite_friends$'))
     application.add_handler(CallbackQueryHandler(check_membership, pattern='^check_membership$'))
 
-    # Initialize and run the application
+    # Initialize and set webhook
     await application.initialize()
     await application.start()
-    await application.updater.start_polling(allowed_updates=Update.ALL_TYPES)
+    if WEBHOOK_URL:
+        await application.bot.set_webhook(url=urljoin(WHOOK_URL, WEBHOOK_PATH))
+        logger.info(f"Webhook set to {urljoin(WHOOK_URL, WEBHOOK_PATH)}")
+    else:
+        logger.warning("WEBHOOK_URL not set, falling back to polling")
+        await application.updater.start_polling(allowed_updates=Update.ALL_TYPES)
 
     # Keep the application running
     try:
-        # Use an async sleep to keep the application running
         while True:
-            await asyncio.sleep(3600)  # Sleep for an hour, effectively keeping the bot running
+            await asyncio.sleep(3600)  # Sleep for an hour to keep the bot running
     except KeyboardInterrupt:
-        # Graceful shutdown on interruption
+        # Graceful shutdown
+        if WEBHOOK_URL:
+            await application.bot.delete_webhook()
         await application.updater.stop()
         await application.stop()
         await application.shutdown()
 
 if __name__ == '__main__':
-    # Use the existing event loop instead of asyncio.run()
+    import uvicorn
+    from fastapi import FastAPI, Request, HTTPException
+
+    app = FastAPI()
+
+    # Webhook endpoint
+    @app.post(WEBHOOK_PATH)
+    async def webhook_endpoint(request: Request):
+        update = Update.de_json(await request.json(), None)
+        if update:
+            await webhook(update, ContextTypes.DEFAULT_TYPE()._replace(application=app.state.application))
+        else:
+            raise HTTPException(status_code=400, message="Invalid update")
+        return {"status": "ok"}
+
+    # Initialize application and store it in FastAPI app state
+    async def init_application():
+        app.state.application = Application.builder().token(TOKEN).build()
+        await main()
+
+    # Start the server
     loop = asyncio.get_event_loop()
     try:
         if loop.is_running():
-            # If an event loop is already running, create a task
-            loop.create_task(main())
+            loop.create_task(init_application())
         else:
-            # Otherwise, run the main coroutine
+            loop.run_until_complete(init_application())
+        if WEBHOOK_URL:
+            uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
+        else:
             loop.run_until_complete(main())
     except RuntimeError as e:
         logger.error(f"Event loop error: {e}")
     finally:
-        # Ensure the database connection is closed
         conn.close()
