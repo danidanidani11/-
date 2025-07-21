@@ -155,7 +155,7 @@ def spin_wheel(update: Update, context: CallbackContext):
     [InlineKeyboardButton("افزایش موجودی", callback_data="increase_balance")],
     [InlineKeyboardButton("بازگشت به منوی اصلی", callback_data="main_menu")]
 ])
-        return
+return reply_markup
     
     # کسر هزینه از موجودی کاربر
     new_balance = balance - SPIN_COST
@@ -435,7 +435,7 @@ def buy_hidden_stage(update: Update, context: CallbackContext):
     [InlineKeyboardButton("افزایش موجودی", callback_data="increase_balance")],
     [InlineKeyboardButton("بازگشت", callback_data="hidden_stage")]
 ])
-        return
+return reply_markup      
     
     # کسر هزینه از موجودی کاربر
     new_balance = balance - cost
@@ -750,6 +750,7 @@ def process_text(update: Update, context: CallbackContext):
                 reply_markup = InlineKeyboardMarkup([
     [InlineKeyboardButton("منوی اصلی", callback_data="main_menu")]
 ])
+return reply_markup
 
 if __name__ == '__main__':
     main()
