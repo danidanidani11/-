@@ -14,6 +14,7 @@ from telegram.ext import (
 import asyncio
 import os
 from urllib.parse import urljoin
+import pathlib
 
 # Logging configuration
 logging.basicConfig(
@@ -26,15 +27,21 @@ TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '8078210260:AAEX-vz_apP68a6WhzaGhuAKK7am
 CHANNEL_USERNAME = '@charkhoun'
 ADMIN_ID = int(os.getenv('ADMIN_ID', 5542927340))
 TRON_ADDRESS = os.getenv('TRON_ADDRESS', 'TJ4xrwKJzKjk6FgKfuuqwah3Az5Ur22kJb')
-SPIN_COST = 50000  # Updated to 50,000 toman
+SPIN_COST = 50000  # 50,000 toman
 INVITE_REWARD = 2000
 HIDDEN_STAGE_COST = 5000
 HIDDEN_STAGE_REWARD = 50000
-WEBHOOK_URL = os.getenv('WEBHOOK_URL')  # Set in Render environment, e.g., https://your-app.onrender.com/webhook
+WEBHOOK_URL = os.getenv('WEBHOOK_URL')  # e.g., https://your-app.onrender.com
 WEBHOOK_PATH = '/webhook'
+DB_PATH = os.getenv('DB_PATH', 'wheel_bot.db')  # Fallback to local file for testing
+
+# Ensure database directory exists
+db_dir = os.path.dirname(DB_PATH)
+if db_dir:
+    pathlib.Path(db_dir).mkdir(parents=True, exist_ok=True)
 
 # Database connection
-conn = sqlite3.connect('/path/to/persistent/disk/wheel_bot.db', check_same_thread=False)  # Update path for Render
+conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 cursor = conn.cursor()
 
 # Create necessary tables
@@ -838,13 +845,13 @@ async def process_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ])
         )
 
-# Webhook handler (for Render)
+# Webhook handler
 async def webhook(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.application.process_update(update)
 
 # Main function
 async def main():
-    # Create the Application with webhook support
+    # Create the Application
     application = Application.builder().token(TOKEN).build()
 
     # Commands
@@ -875,8 +882,8 @@ async def main():
     await application.initialize()
     await application.start()
     if WEBHOOK_URL:
-        await application.bot.set_webhook(url=urljoin(WHOOK_URL, WEBHOOK_PATH))
-        logger.info(f"Webhook set to {urljoin(WHOOK_URL, WEBHOOK_PATH)}")
+        await application.bot.set_webhook(url=urljoin(WEBHOOK_URL, WEBHOOK_PATH))
+        logger.info(f"Webhook set to {urljoin(WEBHOOK_URL, WEBHOOK_PATH)}")
     else:
         logger.warning("WEBHOOK_URL not set, falling back to polling")
         await application.updater.start_polling(allowed_updates=Update.ALL_TYPES)
@@ -884,9 +891,8 @@ async def main():
     # Keep the application running
     try:
         while True:
-            await asyncio.sleep(3600)  # Sleep for an hour to keep the bot running
+            await asyncio.sleep(3600)  # Sleep for an hour
     except KeyboardInterrupt:
-        # Graceful shutdown
         if WEBHOOK_URL:
             await application.bot.delete_webhook()
         await application.updater.stop()
@@ -909,7 +915,7 @@ if __name__ == '__main__':
             raise HTTPException(status_code=400, message="Invalid update")
         return {"status": "ok"}
 
-    # Initialize application and store it in FastAPI app state
+    # Initialize application
     async def init_application():
         app.state.application = Application.builder().token(TOKEN).build()
         await main()
