@@ -12,6 +12,16 @@ from contextlib import contextmanager
 import hashlib
 import time
 from typing import Optional
+import logging
+from telegram.error import TelegramError
+from tenacity import retry, stop_after_attempt, wait_fixed
+
+# Setup logging
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
 # Load sensitive data from environment variables
 TOKEN = os.getenv("BOT_TOKEN", "8078210260:AAEX-vz_apP68a6WhzaGhuAKK7amC1qUiEY")
@@ -19,6 +29,7 @@ ADMIN_ID = int(os.getenv("ADMIN_ID", 5542927340))
 CHANNEL_ID = os.getenv("CHANNEL_ID", "@charkhoun")
 TRON_ADDRESS = os.getenv("TRON_ADDRESS", "TJ4xrwKJzKjk6FgKfuuqwah3Az5Ur22kJb")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://0kik4x8alj.onrender.com")
+STRICT_MEMBERSHIP = os.getenv("STRICT_MEMBERSHIP", "true").lower() == "true"
 
 SPIN_COST = 50
 SECRET_COST = 5000
@@ -139,12 +150,22 @@ def add_prize(user_id: int, prize: str) -> None:
                       (f"{prize},", time.time(), user_id))
         conn.commit()
 
-def check_channel_membership(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> bool:
+@retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
+async def check_channel_membership(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> bool:
     try:
-        member = context.bot.get_chat_member(CHANNEL_ID, user_id)
-        return member.status in ['member', 'administrator', 'creator']
+        member = await context.bot.get_chat_member(CHANNEL_ID, user_id)
+        is_member = member.status in ['member', 'administrator', 'creator']
+        logger.info(f"Membership check for user {user_id}: {'Member' if is_member else 'Not a member'}")
+        return is_member
+    except TelegramError as e:
+        logger.error(f"Telegram API error checking membership for user {user_id}: {str(e)}")
+        if STRICT_MEMBERSHIP:
+            raise
+        return False  # Fallback to allow proceeding if strict membership is disabled
     except Exception as e:
-        print(f"Error checking channel membership: {e}")
+        logger.error(f"Unexpected error checking membership for user {user_id}: {str(e)}")
+        if STRICT_MEMBERSHIP:
+            raise
         return False
 
 def rate_limit_check(user_id: int, seconds: int = 5) -> bool:
@@ -162,9 +183,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     get_or_create_user(user.id)
 
-    if not check_channel_membership(user.id, context):
+    try:
+        if not await check_channel_membership(user.id, context):
+            await update.message.reply_text(
+                f"⚠️ لطفا ابتدا در کانال ما عضو شوید:\n{CHANNEL_ID}\nسپس /start را دوباره بزنید.\n\n"
+                "اگر مشکلی پیش آمد، دوباره امتحان کنید یا با پشتیبانی تماس بگیرید."
+            )
+            return
+    except Exception as e:
+        logger.error(f"Membership check failed for user {user.id}: {str(e)}")
         await update.message.reply_text(
-            f"⚠️ لطفا ابتدا در کانال ما عضو شوید:\n{CHANNEL_ID}\nسپس /start را دوباره بزنید."
+            "⚠️ خطایی در بررسی عضویت رخ داد. لطفاً دوباره امتحان کنید یا با پشتیبانی تماس بگیرید.",
+            reply_markup=back_button()
         )
         return
 
@@ -191,9 +221,9 @@ async def spin_wheel(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> str:
     if not rate_limit_check(user_id):
         return "❌ لطفاً چند ثانیه صبر کنید و دوباره امتحان کنید."
     
-    # Normalized weights to sum exactly to 100
+    # Normalized weights
     result = random.choices(
-        ["پوچ", "100 هزار تومان", "پریمیوم ۳ ماهه تلگرام", "۱۰ میلیون تومان", "کتاب رایگان", "کد ورود به مرحله پنهان"],
+        ["پوچ", "100 هزار تومان", "پریمیوم ۳ ماهه تلگرام", "۱۰ миллиона تومان", "کتاب رایگان", "کد ورود به مرحله پنهان"],
         weights=[70, 3, 0.1, 0.01, 5, 21.89],
         k=1
     )[0]
@@ -208,7 +238,7 @@ async def spin_wheel(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> str:
             prize_msg = "🎉 برنده 100 هزار تومان شدی! موجودی شما افزایش یافت."
             add_prize(user_id, "100 هزار تومان")
         elif result == "پریمیوم ۳ ماهه تلگرام":
-            prize_msg = "🎁 برنده اشتراک پریمیوم ۳ ماهه تلگرام شدی! لطفا با ادمین تماس بگیرید."
+            prize_msg = "🎁 برنده اشتراک پریمیوم ۳ ماهه تلگرام شدی! لطفا با ادمین تماس کنید."
             add_prize(user_id, "پریمیوم ۳ ماهه تلگرام")
             cursor.execute("INSERT OR REPLACE INTO top_winners (user_id, username, prize, win_time) VALUES (?, ?, ?, ?)",
                          (user_id, context._user_data.get('username', 'Unknown'), result, time.time()))
@@ -236,16 +266,25 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
     get_or_create_user(user_id)
 
-    if not check_channel_membership(user_id, context):
+    try:
+        if not await check_channel_membership(user_id, context):
+            await query.edit_message_text(
+                f"⚠️ لطفا ابتدا در کانال ما عضو شوید:\n{CHANNEL_ID}\nسپس دوباره امتحان کنید.\n\n"
+                "اگر مشکلی پیش آمد، دوباره امتحان کنید یا با پشتیبانی تماس بگیرید.",
+                reply_markup=back_button()
+            )
+            return
+    except Exception as e:
+        logger.error(f"Membership check failed in callback for user {user_id}: {str(e)}")
         await query.edit_message_text(
-            f"⚠️ لطفا ابتدا در کانال ما عضو شوید:\n{CHANNEL_ID}\nسپس دوباره امتحان کنید.",
+            "⚠️ خطایی در بررسی عضویت رخ داد. لطفاً دوباره امتحان کنید یا با پشتیبانی تماس بگیرید.",
             reply_markup=back_button()
         )
         return
 
     try:
         if query.data == "back":
-            context.user_data.clear()  # Clear context on back
+            context.user_data.clear()
             await query.edit_message_text("منوی اصلی:", reply_markup=main_menu())
 
         elif query.data == "menu":
@@ -401,6 +440,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
     except Exception as e:
+        logger.error(f"Callback handler error for user {user_id}: {str(e)}")
         await query.edit_message_text(
             f"❌ خطایی رخ داد: {str(e)}\nلطفاً دوباره امتحان کنید.",
             reply_markup=back_button()
@@ -410,9 +450,18 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text.strip() if update.message.text else ""
 
-    if not check_channel_membership(user_id, context):
+    try:
+        if not await check_channel_membership(user_id, context):
+            await update.message.reply_text(
+                f"⚠️ لطفا ابتدا در کانال ما عضو شوید:\n{CHANNEL_ID}\nسپس دوباره امتحان کنید.\n\n"
+                "اگر مشکلی پیش آمد، دوباره امتحان کنید یا با پشتیبانی تماس بگیرید."
+            )
+            return
+    except Exception as e:
+        logger.error(f"Membership check failed in message handler for user {user_id}: {str(e)}")
         await update.message.reply_text(
-            f"⚠️ لطفا ابتدا در کانال ما عضو شوید:\n{CHANNEL_ID}\nسپس دوباره امتحان کنید."
+            "⚠️ خطایی در بررسی عضویت رخ داد. لطفاً دوباره امتحان کنید یا با پشتیبانی تماس بگیرید.",
+            reply_markup=back_button()
         )
         return
 
@@ -482,6 +531,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
     except Exception as e:
+        logger.error(f"Message handler error for user {user_id}: {str(e)}")
         await update.message.reply_text(
             f"❌ خطایی رخ داد: {str(e)}\nلطفاً دوباره امتحان کنید.",
             reply_markup=back_button()
@@ -514,6 +564,7 @@ async def handle_admin_approval(update: Update, context: ContextTypes.DEFAULT_TY
             else:
                 await update.message.reply_text("لطفاً فقط 'تایید' یا 'رد' بنویسید.")
         except Exception as e:
+            logger.error(f"Admin approval error: {str(e)}")
             await update.message.reply_text(f"خطا در پردازش: {str(e)}")
 
 # --------------------------- Register Handlers ---------------------------
@@ -530,15 +581,23 @@ application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_a
 
 @app.on_event("startup")
 async def on_startup():
-    await application.bot.delete_webhook()
-    await application.bot.set_webhook(WEBHOOK_URL)
-    await application.initialize()
-    await application.start()
+    try:
+        await application.bot.delete_webhook()
+        await application.bot.set_webhook(WEBHOOK_URL)
+        await application.initialize()
+        await application.start()
+        logger.info("Bot started and webhook set successfully")
+    except Exception as e:
+        logger.error(f"Startup error: {str(e)}")
 
 @app.on_event("shutdown")
 async def on_shutdown():
-    await application.stop()
-    await application.shutdown()
+    try:
+        await application.stop()
+        await application.shutdown()
+        logger.info("Bot stopped successfully")
+    except Exception as e:
+        logger.error(f"Shutdown error: {str(e)}")
 
 @app.post("/")
 async def webhook(req: Request):
@@ -548,5 +607,5 @@ async def webhook(req: Request):
         await application.process_update(update)
         return {"ok": True}
     except Exception as e:
-        print(f"Webhook error: {e}")
+        logger.error(f"Webhook error: {str(e)}")
         return {"ok": False}
