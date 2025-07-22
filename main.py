@@ -14,7 +14,6 @@ from telegram.ext import (
 from fastapi import FastAPI, Request
 import uvicorn
 import asyncio
-import os
 
 # Logging configuration
 logging.basicConfig(
@@ -27,7 +26,7 @@ TOKEN = '8078210260:AAEX-vz_apP68a6WhzaGhuAKK7amC1qUiEY'
 CHANNEL_USERNAME = '@charkhoun'
 ADMIN_ID = 5542927340
 TRON_ADDRESS = 'TJ4xrwKJzKjk6FgKfuuqwah3Az5Ur22kJb'
-SPIN_COST = 50000  # 50,000 Toman
+SPIN_COST = 50000  # Updated to 50,000 Toman
 INVITE_REWARD = 2000
 HIDDEN_STAGE_COST = 5000
 HIDDEN_STAGE_REWARD = 50000
@@ -242,10 +241,7 @@ async def spin_wheel(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🏆 جایزه: {prize_name}\n"
             f"⏰ زمان: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
         )
-        try:
-            await context.bot.send_message(chat_id=ADMIN_ID, text=admin_message)
-        except Exception as e:
-            logger.error(f"Error notifying admin: {e}")
+        await context.bot.send_message(chat_id=ADMIN_ID, text=admin_message)
 
         # Respond to user
         if spin_result == "hidden_stage":
@@ -269,13 +265,10 @@ async def spin_wheel(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     [InlineKeyboardButton("بازگشت به منوی اصلی", callback_data="main_menu")]
                 ])
             )
-            try:
-                await context.bot.send_message(
-                    chat_id=user_id,
-                    text=f"👤 برای دریافت جایزه خود ({prize_name}) لطفاً با ادمین تماس بگیرید: @{CHANNEL_USERNAME[1:]}"
-                )
-            except Exception as e:
-                logger.error(f"Error sending prize message: {e}")
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=f"👤 برای دریافت جایزه خود ({prize_name}) لطفاً با ادمین تماس بگیرید: @{CHANNEL_USERNAME[1:]}"
+            )
         else:
             await query.edit_message_text(
                 text=f"متأسفیم! این بار جایزه‌ای نبردید.\n\nموجودی جدید شما: {new_balance} تومان",
@@ -286,9 +279,6 @@ async def spin_wheel(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
     except sqlite3.Error as e:
         logger.error(f"Database error in spin_wheel: {e}")
-        await query.answer("❌ خطایی رخ داد. لطفاً دوباره تلاش کنید.", show_alert=True)
-    except Exception as e:
-        logger.error(f"Unexpected error in spin_wheel: {e}")
         await query.answer("❌ خطایی رخ داد. لطفاً دوباره تلاش کنید.", show_alert=True)
 
 # Show balance
@@ -389,14 +379,11 @@ async def process_deposit_proof(update: Update, context: ContextTypes.DEFAULT_TY
             ]
         ]
 
-        try:
-            await context.bot.send_message(
-                chat_id=ADMIN_ID,
-                text=admin_message,
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
-        except Exception as e:
-            logger.error(f"Error sending deposit request to admin: {e}")
+        await context.bot.send_message(
+            chat_id=ADMIN_ID,
+            text=admin_message,
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
 
         await update.message.reply_text(
             text="✅ فیش واریزی شما با موفقیت دریافت شد و برای تایید به ادمین ارسال شد.",
@@ -407,12 +394,9 @@ async def process_deposit_proof(update: Update, context: ContextTypes.DEFAULT_TY
     except sqlite3.Error as e:
         logger.error(f"Database error in process_deposit_proof: {e}")
         await update.message.reply_text("❌ خطایی رخ داد. لطفاً دوباره تلاش کنید.")
-    except Exception as e:
-        logger.error(f"Unexpected error in process_deposit_proof: {e}")
-        await update.message.reply_text("❌ خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
 # Handle admin decision
-async def handle_admin_decision(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_admin_decision(update: Update, context: ContextTypes.GROK):
     query = update.callback_query
     data = query.data.split('_')
     action = data[0]
@@ -437,30 +421,24 @@ async def handle_admin_decision(update: Update, context: ContextTypes.DEFAULT_TY
             )
             conn.commit()
 
-            try:
-                await context.bot.send_message(
-                    chat_id=user_id,
-                    text=f"✅ درخواست افزایش موجودی شما به مبلغ {amount} تومان تأیید شد.\n\n💰 موجودی جدید شما: {new_balance} تومان",
-                    reply_markup=InlineKeyboardMarkup([
-                        [InlineKeyboardButton("چرخاندن گردونه", callback_data="spin_wheel")],
-                        [InlineKeyboardButton("منوی اصلی", callback_data="main_menu")]
-                    ])
-                )
-                await query.answer("درخواست با موفقیت تایید شد و موجودی کاربر افزایش یافت.")
-            except Exception as e:
-                logger.error(f"Error notifying user of approval: {e}")
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=f"✅ درخواست افزایش موجودی شما به مبلغ {amount} تومان تأیید شد.\n\n💰 موجودی جدید شما: {new_balance} تومان",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("چرخاندن گردونه", callback_data="spin_wheel")],
+                    [InlineKeyboardButton("منوی اصلی", callback_data="main_menu")]
+                ])
+            )
+            await query.answer("درخواست با موفقیت تایید شد و موجودی کاربر افزایش یافت.")
         else:
-            try:
-                await context.bot.send_message(
-                    chat_id=user_id,
-                    text=f"❌ متأسفانه درخواست افزایش موجودی شما به مبلغ {amount} تومان رد شد.\n\nلطفاً در صورت نیاز با پشتیبانی تماس بگیرید.",
-                    reply_markup=InlineKeyboardMarkup([
-                        [InlineKeyboardButton("منوی اصلی", callback_data="main_menu")]
-                    ])
-                )
-                await query.answer("درخواست رد شد.")
-            except Exception as e:
-                logger.error(f"Error notifying user of rejection: {e}")
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=f"❌ متأسفانه درخواست افزایش موجودی شما به مبلغ {amount} تومان رد شد.\n\nلطفاً در صورت نیاز با پشتیبانی تماس بگیرید.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("منوی اصلی", callback_data="main_menu")]
+                ])
+            )
+            await query.answer("درخواست رد شد.")
 
         await query.edit_message_text(
             text=query.message.text + f"\n\nوضعیت: {action == 'approve' and 'تایید شد ✅' or 'رد شد ❌'}",
@@ -468,9 +446,6 @@ async def handle_admin_decision(update: Update, context: ContextTypes.DEFAULT_TY
         )
     except sqlite3.Error as e:
         logger.error(f"Database error in handle_admin_decision: {e}")
-        await query.answer("❌ خطایی رخ داد. لطفاً دوباره تلاش کنید.", show_alert=True)
-    except Exception as e:
-        logger.error(f"Unexpected error in handle_admin_decision: {e}")
         await query.answer("❌ خطایی رخ داد. لطفاً دوباره تلاش کنید.", show_alert=True)
 
 # Hidden stage menu
@@ -497,22 +472,7 @@ async def start_hidden_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Register user
     register_user(user_id, query.from_user.username, query.from_user.first_name, query.from_user.last_name)
 
-    # Check membership
-    if not await is_user_member(user_id, context):
-        await query.answer("❌ لطفاً ابتدا در کانال عضو شوید!", show_alert=True)
-        await main_menu(update, context)
-        return
-
     try:
-        # Check if user has a valid hidden stage code
-        cursor.execute("SELECT code FROM hidden_stage_codes WHERE user_id = ? AND used = 0", (user_id,))
-        result = cursor.fetchone()
-
-        if not result:
-            await query.answer("❌ شما کد معتبر برای ورود به بازی ندارید. لطفاً کد خریداری کنید یا کد دریافتی را وارد کنید.", show_alert=True)
-            await hidden_stage_menu(update, context)
-            return
-
         cursor.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
         result = cursor.fetchone()
         balance = result[0] if result else 0
@@ -545,9 +505,6 @@ async def start_hidden_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     except sqlite3.Error as e:
         logger.error(f"Database error in start_hidden_game: {e}")
-        await query.answer("❌ خطایی رخ داد. لطفاً دوباره تلاش کنید.", show_alert=True)
-    except Exception as e:
-        logger.error(f"Unexpected error in start_hidden_game: {e}")
         await query.answer("❌ خطایی رخ داد. لطفاً دوباره تلاش کنید.", show_alert=True)
 
 # Process number guess
@@ -628,9 +585,6 @@ async def process_number_guess(update: Update, context: ContextTypes.DEFAULT_TYP
     except sqlite3.Error as e:
         logger.error(f"Database error in process_number_guess: {e}")
         await update.message.reply_text("❌ خطایی رخ داد. لطفاً دوباره تلاش کنید.")
-    except Exception as e:
-        logger.error(f"Unexpected error in process_number_guess: {e}")
-        await update.message.reply_text("❌ خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
 # Buy hidden stage
 async def buy_hidden_stage(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -639,12 +593,6 @@ async def buy_hidden_stage(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Register user
     register_user(user_id, query.from_user.username, query.from_user.first_name, query.from_user.last_name)
-
-    # Check membership
-    if not await is_user_member(user_id, context):
-        await query.answer("❌ لطفاً ابتدا در کانال عضو شوید!", show_alert=True)
-        await main_menu(update, context)
-        return
 
     try:
         cursor.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
@@ -681,9 +629,6 @@ async def buy_hidden_stage(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     except sqlite3.Error as e:
         logger.error(f"Database error in buy_hidden_stage: {e}")
-        await query.answer("❌ خطایی رخ داد. لطفاً دوباره تلاش کنید.", show_alert=True)
-    except Exception as e:
-        logger.error(f"Unexpected error in buy_hidden_stage: {e}")
         await query.answer("❌ خطایی رخ داد. لطفاً دوباره تلاش کنید.", show_alert=True)
 
 # Enter hidden code
@@ -747,9 +692,6 @@ async def process_hidden_code(update: Update, context: ContextTypes.DEFAULT_TYPE
     except sqlite3.Error as e:
         logger.error(f"Database error in process_hidden_code: {e}")
         await update.message.reply_text("❌ خطایی رخ داد. لطفاً دوباره تلاش کنید.")
-    except Exception as e:
-        logger.error(f"Unexpected error in process_hidden_code: {e}")
-        await update.message.reply_text("❌ خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
 # Show top winners
 async def show_top_winners(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -773,9 +715,6 @@ async def show_top_winners(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     except sqlite3.Error as e:
         logger.error(f"Database error in show_top_winners: {e}")
-        await query.answer("❌ خطایی رخ داد. لطفاً دوباره تلاش کنید.", show_alert=True)
-    except Exception as e:
-        logger.error(f"Unexpected error in show_top_winners: {e}")
         await query.answer("❌ خطایی رخ داد. لطفاً دوباره تلاش کنید.", show_alert=True)
 
 # Show profile
@@ -811,9 +750,6 @@ async def show_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     except sqlite3.Error as e:
         logger.error(f"Database error in show_profile: {e}")
-        await query.answer("❌ خطایی رخ داد. لطفاً دوباره تلاش کنید.", show_alert=True)
-    except Exception as e:
-        logger.error(f"Unexpected error in show_profile: {e}")
         await query.answer("❌ خطایی رخ داد. لطفاً دوباره تلاش کنید.", show_alert=True)
 
 # Invite friends
@@ -900,49 +836,62 @@ async def process_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # Webhook handler
 @app.post("/webhook")
-async def webhook(request: Request, application: Application = None):
-    try:
-        update = Update.de_json(await request.json(), application.bot)
-        await application.process_update(update)
-        return {"status": "ok"}
-    except Exception as e:
-        logger.error(f"Error processing webhook: {e}")
-        return {"status": "error"}
-
-# Initialize application globally
-application = Application.builder().token(TOKEN).build()
+async def webhook(request: Request):
+    update = Update.de_json(await request.json(), application.bot)
+    await application.process_update(update)
+    return {"status": "ok"}
 
 # Main function
 async def main():
-    global application
-    try:
-        # Ensure webhook is set correctly
-        WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://your-render-app-name.onrender.com/webhook")  # Replace with your Render URL
-        await application.bot.set_webhook(url=WEBHOOK_URL)
-        logger.info(f"Webhook set to {WEBHOOK_URL}")
+    # Create the Application
+    application = Application.builder().token(TOKEN).build()
 
-        # Initialize and start the application
-        await application.initialize()
-        await application.start()
+    # Commands
+    application.add_handler(CommandHandler('start', start))
+    application.add_handler(CommandHandler('menu', show_menu))
 
-        # Start FastAPI server
-        port = int(os.getenv("PORT", 8000))  # Use Render's PORT env variable
-        config = uvicorn.Config(app, host="0.0.0.0", port=port)
-        server = uvicorn.Server(config)
-        await server.serve()
+    # Message handlers
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, process_text))
+    application.add_handler(MessageHandler(filters.PHOTO | filters.Document.ALL, process_deposit_proof))
 
-    except Exception as e:
-        logger.error(f"Error in main: {e}")
-    finally:
-        await application.stop()
-        await application.shutdown()
-        conn.close()
+    # Callback handlers
+    application.add_handler(CallbackQueryHandler(main_menu, pattern='^main_menu$'))
+    application.add_handler(CallbackQueryHandler(spin_wheel, pattern='^spin_wheel$'))
+    application.add_handler(CallbackQueryHandler(show_balance, pattern='^balance$'))
+    application.add_handler(CallbackQueryHandler(increase_balance, pattern='^increase_balance$'))
+    application.add_handler(CallbackQueryHandler(request_deposit, pattern='^deposit_'))
+    application.add_handler(CallbackQueryHandler(handle_admin_decision, pattern='^(approve|reject)_'))
+    application.add_handler(CallbackQueryHandler(hidden_stage_menu, pattern='^hidden_stage$'))
+    application.add_handler(CallbackQueryHandler(buy_hidden_stage, pattern='^buy_hidden_stage$'))
+    application.add_handler(CallbackQueryHandler(enter_hidden_code, pattern='^enter_hidden_code$'))
+    application.add_handler(CallbackQueryHandler(start_hidden_game, pattern='^start_hidden_game$'))
+    application.add_handler(CallbackQueryHandler(show_top_winners, pattern='^top_winners$'))
+    application.add_handler(CallbackQueryHandler(show_profile, pattern='^profile$'))
+    application.add_handler(CallbackQueryHandler(invite_friends, pattern='^invite_friends$'))
+    application.add_handler(CallbackQueryHandler(check_membership, pattern='^check_membership$'))
+
+    # Set webhook
+    WEBHOOK_URL = "https://0kik4x8alj.onrender.com/webhook"  # Replace with your Render URL
+    await application.bot.set_webhook(url=WEBHOOK_URL)
+
+    # Initialize and run the application
+    await application.initialize()
+    await application.start()
+
+    # Start FastAPI server
+    config = uvicorn.Config(app, host="0.0.0.0", port=8000)
+    server = uvicorn.Server(config)
+    await server.serve()
 
 if __name__ == '__main__':
+    # Use the existing event loop
     loop = asyncio.get_event_loop()
     try:
-        loop.run_until_complete(main())
-    except Exception as e:
+        if loop.is_running():
+            loop.create_task(main())
+        else:
+            loop.run_until_complete(main())
+    except RuntimeError as e:
         logger.error(f"Event loop error: {e}")
     finally:
         conn.close()
