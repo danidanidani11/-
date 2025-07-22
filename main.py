@@ -214,6 +214,6 @@ async def on_shutdown():
 @app.post("/")
 async def webhook(req: Request):
     data = await req.body()
-    update = Update.de_json(data.decode(), application.bot)
+    update = Update.de_json(json.loads(data), application.bot)
     await application.process_update(update)
     return {"ok": True}
