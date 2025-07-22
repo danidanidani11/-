@@ -5,8 +5,8 @@ import json
 from fastapi import FastAPI, Request
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
-    ApplicationBuilder, CallbackContext, ContextTypes,
-    CommandHandler, CallbackQueryHandler, MessageHandler, filters
+    ApplicationBuilder, ContextTypes,
+    CommandHandler, CallbackQueryHandler, MessageHandler, Filters
 )
 from contextlib import contextmanager
 import hashlib
@@ -151,7 +151,7 @@ def add_prize(user_id: int, prize: str) -> None:
         conn.commit()
 
 @retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
-async def check_channel_membership(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> bool:
+async def check_channel_membership(user_id: int, context: ContextTypes) -> bool:
     try:
         member = await context.bot.get_chat_member(CHANNEL_ID, user_id)
         is_member = member.status in ['member', 'administrator', 'creator']
@@ -161,7 +161,7 @@ async def check_channel_membership(user_id: int, context: ContextTypes.DEFAULT_T
         logger.error(f"Telegram API error checking membership for user {user_id}: {str(e)}")
         if STRICT_MEMBERSHIP:
             raise
-        return False  # Fallback to allow proceeding if strict membership is disabled
+        return False
     except Exception as e:
         logger.error(f"Unexpected error checking membership for user {user_id}: {str(e)}")
         if STRICT_MEMBERSHIP:
@@ -179,7 +179,7 @@ def rate_limit_check(user_id: int, seconds: int = 5) -> bool:
 
 # --------------------------- Handlers ---------------------------
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start(update: Update, context: ContextTypes):
     user = update.effective_user
     get_or_create_user(user.id)
 
@@ -214,16 +214,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=main_menu()
     )
 
-async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def menu(update: Update, context: ContextTypes):
     await update.message.reply_text("منوی اصلی:", reply_markup=main_menu())
 
-async def spin_wheel(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> str:
+async def spin_wheel(user_id: int, context: ContextTypes) -> str:
     if not rate_limit_check(user_id):
         return "❌ لطفاً چند ثانیه صبر کنید و دوباره امتحان کنید."
     
-    # Normalized weights
     result = random.choices(
-        ["پوچ", "100 هزار تومان", "پریمیوم ۳ ماهه تلگرام", "۱۰ миллиона تومان", "کتاب رایگان", "کد ورود به مرحله پنهان"],
+        ["پوچ", "100 هزار تومان", "پریمیوم ۳ ماهه تلگرام", "۱۰ میلیون تومان", "کتاب رایگان", "کد ورود به مرحله پنهان"],
         weights=[70, 3, 0.1, 0.01, 5, 21.89],
         k=1
     )[0]
@@ -260,7 +259,7 @@ async def spin_wheel(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> str:
     await context.bot.send_message(ADMIN_ID, f"🎡 کاربر {user_id} گردونه را چرخاند و برنده شد: {result}")
     return prize_msg
 
-async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def callback_handler(update: Update, context: ContextTypes):
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
@@ -446,7 +445,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=back_button()
         )
 
-async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_messages(update: Update, context: ContextTypes):
     user_id = update.effective_user.id
     text = update.message.text.strip() if update.message.text else ""
 
@@ -537,7 +536,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=back_button()
         )
 
-async def handle_admin_approval(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_admin_approval(update: Update, context: ContextTypes):
     if update.effective_user.id != ADMIN_ID:
         return
     
@@ -573,9 +572,9 @@ application = ApplicationBuilder().token(TOKEN).build()
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("menu", menu))
 application.add_handler(CallbackQueryHandler(callback_handler))
-application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_messages))
-application.add_handler(MessageHandler(filters.PHOTO & ~filters.COMMAND, handle_messages))
-application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_admin_approval))
+application.add_handler(MessageHandler(Filters.TEXT & ~Filters.COMMAND, handle_messages))
+application.add_handler(MessageHandler(Filters.PHOTO & ~Filters.COMMAND, handle_messages))
+application.add_handler(MessageHandler(Filters.TEXT & ~Filters.COMMAND, handle_admin_approval))
 
 # --------------------------- FastAPI Webhook ---------------------------
 
@@ -589,6 +588,7 @@ async def on_startup():
         logger.info("Bot started and webhook set successfully")
     except Exception as e:
         logger.error(f"Startup error: {str(e)}")
+        raise
 
 @app.on_event("shutdown")
 async def on_shutdown():
