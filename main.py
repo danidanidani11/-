@@ -3,7 +3,7 @@ import sqlite3
 import random
 import json
 from fastapi import FastAPI, Request
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import (
     ApplicationBuilder, ContextTypes,
     CommandHandler, CallbackQueryHandler, MessageHandler, filters
@@ -26,7 +26,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# متغیرهای تنظیمات
+# متغیرهای محیطی
 TOKEN = os.getenv("BOT_TOKEN", "8078210260:AAEX-vz_apP68a6WhzaGhuAKK7amC1qUiEY")
 ADMIN_ID = int(os.getenv("ADMIN_ID", 5542927340))
 CHANNEL_ID = os.getenv("CHANNEL_ID", "@charkhoun")
@@ -86,10 +86,18 @@ def main_menu():
         [InlineKeyboardButton("🕵️ مرحله پنهان", callback_data="secret")],
         [InlineKeyboardButton("🏆 خوش‌شانس‌ترین‌ها", callback_data="top")],
         [InlineKeyboardButton("👤 پروفایل", callback_data="profile")],
-        [InlineKeyboardButton("📢 دعوت دوستان", callback_data="invite")],
-        [InlineKeyboardButton("📌 منو", callback_data="menu")]
+        [InlineKeyboardButton("📢 دعوت دوستان", callback_data="invite")]
     ]
     return InlineKeyboardMarkup(keyboard)
+
+def chat_menu():
+    keyboard = [
+        [KeyboardButton("🎯 چرخوندن گردونه"), KeyboardButton("💰 موجودی")],
+        [KeyboardButton("🕵️ مرحله پنهان"), KeyboardButton("🏆 خوش‌شانس‌ترین‌ها")],
+        [KeyboardButton("👤 پروفایل"), KeyboardButton("📢 دعوت دوستان")],
+        [KeyboardButton("📌 منو")]
+    ]
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 def back_button():
     return InlineKeyboardMarkup([[InlineKeyboardButton("🔙 بازگشت", callback_data="back")]])
@@ -115,7 +123,7 @@ def secret_menu():
     ]
     return InlineKeyboardMarkup(keyboard)
 
-# --------------------------- ابزارهای کمکی ---------------------------
+# --------------------------- توابع کمکی ---------------------------
 
 def generate_invite_code(user_id: int) -> str:
     return hashlib.md5(f"{user_id}{time.time()}".encode()).hexdigest()[:8]
@@ -194,7 +202,7 @@ async def start(update: Update, context: ContextTypes):
             )
             return
     except Exception as e:
-        logger.error(f"خطا در بررسی عضویت برای کاربر {user.id}: {str(e)}")
+        logger.error(f"خطای بررسی عضویت برای کاربر {user.id}: {str(e)}")
         await update.message.reply_text(
             "⚠️ خطایی در بررسی عضویت رخ داد. لطفاً دوباره امتحان کنید یا با پشتیبانی تماس بگیرید.",
             reply_markup=back_button()
@@ -214,20 +222,34 @@ async def start(update: Update, context: ContextTypes):
 
     await update.message.reply_text(
         "🎉 خوش آمدی به گردونه شانس!\n\nبا چرخوندن گردونه شانس بگیر و در مرحله پنهان جایزه ببر!",
-        reply_markup=main_menu()
+        reply_markup=chat_menu()
     )
 
 async def menu(update: Update, context: ContextTypes):
-    await update.message.reply_text("منوی اصلی:", reply_markup=main_menu())
+    user_id = update.effective_user.id
+    try:
+        if not await check_channel_membership(user_id, context):
+            await update.message.reply_text(
+                f"⚠️ لطفا ابتدا در کانال ما عضو شوید:\n{CHANNEL_ID}\nسپس دوباره امتحان کنید."
+            )
+            return
+    except Exception as e:
+        logger.error(f"خطای بررسی عضویت در منو برای کاربر {user_id}: {str(e)}")
+        await update.message.reply_text(
+            "⚠️ خطایی در بررسی عضویت رخ داد. لطفاً دوباره امتحان کنید یا با پشتیبانی تماس بگیرید.",
+            reply_markup=back_button()
+        )
+        return
+
+    await update.message.reply_text("منوی اصلی:", reply_markup=chat_menu())
 
 async def spin_wheel(user_id: int, context: ContextTypes) -> str:
     if not rate_limit_check(user_id):
         return "❌ لطفاً چند ثانیه صبر کنید و دوباره امتحان کنید."
     
-    # وزن‌ها نرمال‌سازی شده تا جمعشون 100 باشه
     result = random.choices(
         ["پوچ", "100 هزار تومان", "پریمیوم ۳ ماهه تلگرام", "۱۰ میلیون تومان", "کتاب رایگان", "کد ورود به مرحله پنهان"],
-        weights=[70, 3, 0.1, 0.01, 5, 21.9],
+        weights=[70, 3, 0.1, 0.01, 5, 21.89],
         k=1
     )[0]
     
@@ -244,14 +266,14 @@ async def spin_wheel(user_id: int, context: ContextTypes) -> str:
             prize_msg = "🎁 برنده اشتراک پریمیوم ۳ ماهه تلگرام شدی! لطفا با ادمین تماس کنید."
             add_prize(user_id, "پریمیوم ۳ ماهه تلگرام")
             cursor.execute("INSERT OR REPLACE INTO top_winners (user_id, username, prize, win_time) VALUES (?, ?, ?, ?)",
-                         (user_id, update.effective_user.username or 'Unknown', result, time.time()))
+                         (user_id, context.user_data.get('username', 'Unknown'), result, time.time()))
         elif result == "۱۰ میلیون تومان":
-            prize_msg = "🏆 برنده ۱۰ میلیون تومان شدی! لطفا با ادمین تماس بگیرید."
+            prize_msg = "🏆 برنده ۱۰ میلیون تومان شدی! لطفا با ادمین تماس کنید."
             add_prize(user_id, "۱۰ میلیون تومان")
             cursor.execute("INSERT OR REPLACE INTO top_winners (user_id, username, prize, win_time) VALUES (?, ?, ?, ?)",
-                         (user_id, update.effective_user.username or 'Unknown', result, time.time()))
+                         (user_id, context.user_data.get('username', 'Unknown'), result, time.time()))
         elif result == "کتاب رایگان":
-            prize_msg = "📚 برنده کتاب رایگان شدی! لطفا با ادمین تماس بگیرید."
+            prize_msg = "📚 برنده کتاب رایگان شدی! لطفا با ادمین تماس کنید."
             add_prize(user_id, "کتاب رایگان")
         elif result == "کد ورود به مرحله پنهان":
             cursor.execute("UPDATE users SET secret_access = 1, last_action = ? WHERE user_id = ?",
@@ -278,7 +300,7 @@ async def callback_handler(update: Update, context: ContextTypes):
             )
             return
     except Exception as e:
-        logger.error(f"خطا در بررسی عضویت در هندلر callback برای کاربر {user_id}: {str(e)}")
+        logger.error(f"خطای بررسی عضویت در callback برای کاربر {user_id}: {str(e)}")
         await query.edit_message_text(
             "⚠️ خطایی در بررسی عضویت رخ داد. لطفاً دوباره امتحان کنید یا با پشتیبانی تماس بگیرید.",
             reply_markup=back_button()
@@ -288,11 +310,7 @@ async def callback_handler(update: Update, context: ContextTypes):
     try:
         if query.data == "back":
             context.user_data.clear()
-            await query.edit_message_text("منوی اصلی:", reply_markup=main_menu())
-
-        elif query.data == "menu":
-            context.user_data.clear()
-            await query.edit_message_text("منوی اصلی:", reply_markup=main_menu())
+            await query.edit_message_text("منوی اصلی:", reply_markup=chat_menu())
 
         elif query.data == "balance":
             balance = get_balance(user_id)
@@ -443,7 +461,7 @@ async def callback_handler(update: Update, context: ContextTypes):
             )
 
     except Exception as e:
-        logger.error(f"خطا در هندلر callback برای کاربر {user_id}: {str(e)}")
+        logger.error(f"خطای هندلر callback برای کاربر {user_id}: {str(e)}")
         await query.edit_message_text(
             f"❌ خطایی رخ داد: {str(e)}\nلطفاً دوباره امتحان کنید.",
             reply_markup=back_button()
@@ -457,19 +475,109 @@ async def handle_messages(update: Update, context: ContextTypes):
         if not await check_channel_membership(user_id, context):
             await update.message.reply_text(
                 f"⚠️ لطفا ابتدا در کانال ما عضو شوید:\n{CHANNEL_ID}\nسپس دوباره امتحان کنید.\n\n"
-                "اگر مشکلی پیش آمد، دوباره امتحان کنید یا با پشتیبانی تماس بگیرید."
+                "اگر مشکلی پیش آمد، دوباره امتحان کنید یا با پشتیبانی تماس بگیرید.",
+                reply_markup=chat_menu()
             )
             return
     except Exception as e:
-        logger.error(f"خطا در بررسی عضویت در هندلر پیام برای کاربر {user_id}: {str(e)}")
+        logger.error(f"خطای بررسی عضویت در هندلر پیام برای کاربر {user_id}: {str(e)}")
         await update.message.reply_text(
             "⚠️ خطایی در بررسی عضویت رخ داد. لطفاً دوباره امتحان کنید یا با پشتیبانی تماس بگیرید.",
-            reply_markup=back_button()
+            reply_markup=chat_menu()
         )
         return
 
     try:
-        if context.user_data.get("waiting_for_secret_guess"):
+        if text == "📌 منو":
+            await update.message.reply_text("منوی اصلی:", reply_markup=chat_menu())
+            return
+
+        if text == "🎯 چرخوندن گردونه":
+            if not rate_limit_check(user_id):
+                await update.message.reply_text(
+                    "❌ لطفاً چند ثانیه صبر کنید و دوباره امتحان کنید.",
+                    reply_markup=chat_menu()
+                )
+                return
+                
+            balance = get_balance(user_id)
+            if balance < SPIN_COST:
+                keyboard = [
+                    [InlineKeyboardButton("💰 افزایش موجودی", callback_data="deposit")],
+                    [InlineKeyboardButton("🔙 بازگشت", callback_data="back")]
+                ]
+                await update.message.reply_text(
+                    f"❌ موجودی شما کافی نیست. هزینه چرخش: {SPIN_COST} تومان\nموجودی فعلی: {balance} تومان",
+                    reply_markup=InlineKeyboardMarkup(keyboard)
+                )
+                return
+
+            update_balance(user_id, -SPIN_COST)
+            prize_msg = await spin_wheel(user_id, context)
+            await update.message.reply_text(
+                f"🎡 گردونه در حال چرخش...\n\n{prize_msg}",
+                reply_markup=chat_menu()
+            )
+
+        elif text == "💰 موجودی":
+            balance = get_balance(user_id)
+            keyboard = [
+                [InlineKeyboardButton("💰 افزایش موجودی", callback_data="deposit")],
+                [InlineKeyboardButton("🔙 بازگشت", callback_data="back")]
+            ]
+            await update.message.reply_text(
+                f"💰 موجودی شما: {balance} تومان",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+
+        elif text == "🕵️ مرحله پنهان":
+            await update.message.reply_text(
+                "🕵️ مرحله پنهان:\n\n"
+                "در این مرحله شما باید یک عدد بین 1 تا 100 را حدس بزنید.\n"
+                "در صورت بردن، 50 هزار تومان جایزه میگیری (1 گردونه رایگان)!",
+                reply_markup=secret_menu()
+            )
+
+        elif text == "🏆 خوش‌شانس‌ترین‌ها":
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT user_id, username, prize FROM top_winners ORDER BY win_time DESC LIMIT 10")
+                rows = cursor.fetchall()
+            msg = "🏆 خوش‌شانس‌ترین‌ها:\n\n"
+            for i, row in enumerate(rows, 1):
+                msg += f"{i}. @{row[1] or 'Unknown'} - برنده {row[2]}\n"
+            if not rows:
+                msg = "هنوز برنده ای ثبت نشده است."
+            await update.message.reply_text(msg, reply_markup=chat_menu())
+
+        elif text == "👤 پروفایل":
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT balance, invites, prizes, invite_code FROM users WHERE user_id=?", (user_id,))
+                balance, invites, prizes, invite_code = cursor.fetchone()
+            prizes = prizes[:-1] if prizes else "هیچ جایزه‌ای"
+            await update.message.reply_text(
+                f"👤 پروفایل شما:\n\n"
+                f"💰 موجودی: {balance} تومان\n"
+                f"👥 دعوت موفق: {invites} نفر\n"
+                f"🔗 کد دعوت: {invite_code}\n"
+                f"🎁 جوایز برده شده: {prizes}",
+                reply_markup=chat_menu()
+            )
+
+        elif text == "📢 دعوت دوستان":
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT invite_code FROM users WHERE user_id=?", (user_id,))
+                invite_code = cursor.fetchone()[0]
+            invite_link = f"https://t.me/charkhoon_bot?start={invite_code}"
+            await update.message.reply_text(
+                f"📢 لینک دعوت شما:\n{invite_link}\n\n"
+                "با دعوت هر دوست 2000 تومان جایزه بگیر!",
+                reply_markup=chat_menu()
+            )
+
+        elif context.user_data.get("waiting_for_secret_guess"):
             context.user_data["waiting_for_secret_guess"] = False
             try:
                 guess = int(text)
@@ -480,17 +588,17 @@ async def handle_messages(update: Update, context: ContextTypes):
                     update_balance(user_id, SECRET_REWARD)
                     await update.message.reply_text(
                         f"🎉 درست گفتی! جایزه {SECRET_REWARD} تومان (1 گردونه رایگان) به موجودیت اضافه شد.",
-                        reply_markup=back_button()
+                        reply_markup=chat_menu()
                     )
                 else:
                     await update.message.reply_text(
                         f"❌ عدد درست {number} بود. شانست رو امتحان کن دوباره!",
-                        reply_markup=back_button()
+                        reply_markup=chat_menu()
                     )
             except ValueError as e:
                 await update.message.reply_text(
                     f"❌ {str(e)}. لطفاً فقط یک عدد معتبر بفرست.",
-                    reply_markup=back_button()
+                    reply_markup=chat_menu()
                 )
 
         elif context.user_data.get("waiting_for_secret_code"):
@@ -530,14 +638,14 @@ async def handle_messages(update: Update, context: ContextTypes):
             
             await update.message.reply_text(
                 "✅ رسید پرداخت برای بررسی به ادمین ارسال شد. پس از تایید، موجودی شما افزایش می‌یابد.",
-                reply_markup=back_button()
+                reply_markup=chat_menu()
             )
 
     except Exception as e:
-        logger.error(f"خطا در هندلر پیام برای کاربر {user_id}: {str(e)}")
+        logger.error(f"خطای هندلر پیام برای کاربر {user_id}: {str(e)}")
         await update.message.reply_text(
             f"❌ خطایی رخ داد: {str(e)}\nلطفاً دوباره امتحان کنید.",
-            reply_markup=back_button()
+            reply_markup=chat_menu()
         )
 
 async def handle_admin_approval(update: Update, context: ContextTypes):
@@ -555,20 +663,22 @@ async def handle_admin_approval(update: Update, context: ContextTypes):
                 update_balance(user_id, amount)
                 await context.bot.send_message(
                     user_id,
-                    f"✅ درخواست افزایش موجودی شما به مبلغ {amount} تومان تایید شد."
+                    f"✅ درخواست افزایش موجودی شما به مبلغ {amount} تومان تایید شد.",
+                    reply_markup=chat_menu()
                 )
-                await update.message.reply_text("✅ درخواست تایید شد.")
+                await update.message.reply_text("✅ درخواست تایید شد.", reply_markup=chat_menu())
             elif "رد" in text:
                 await context.bot.send_message(
                     user_id,
-                    f"❌ درخواست افزایش موجودی شما به مبلغ {amount} تومان رد شد."
+                    f"❌ درخواست افزایش موجودی شما به مبلغ {amount} تومان رد شد.",
+                    reply_markup=chat_menu()
                 )
-                await update.message.reply_text("✅ درخواست رد شد.")
+                await update.message.reply_text("✅ درخواست رد شد.", reply_markup=chat_menu())
             else:
-                await update.message.reply_text("لطفاً فقط 'تایید' یا 'رد' بنویسید.")
+                await update.message.reply_text("لطفاً فقط 'تایید' یا 'رد' بنویسید.", reply_markup=chat_menu())
         except Exception as e:
-            logger.error(f"خطا در تایید ادمین: {str(e)}")
-            await update.message.reply_text(f"خطا در پردازش: {str(e)}")
+            logger.error(f"خطای تایید ادمین: {str(e)}")
+            await update.message.reply_text(f"خطا در پردازش: {str(e)}", reply_markup=chat_menu())
 
 # --------------------------- ثبت هندلرها ---------------------------
 
@@ -589,9 +699,9 @@ async def on_startup():
         await application.bot.set_webhook(WEBHOOK_URL)
         await application.initialize()
         await application.start()
-        logger.info("ربات با موفقیت راه‌اندازی شد و وب‌هوک تنظیم شد")
+        logger.info("ربات با موفقیت شروع شد و وب‌هوک تنظیم شد")
     except Exception as e:
-        logger.error(f"خطا در راه‌اندازی: {str(e)}")
+        logger.error(f"خطای استارتاپ: {str(e)}")
         raise
 
 @app.on_event("shutdown")
@@ -601,7 +711,7 @@ async def on_shutdown():
         await application.shutdown()
         logger.info("ربات با موفقیت متوقف شد")
     except Exception as e:
-        logger.error(f"خطا در خاموش کردن: {str(e)}")
+        logger.error(f"خطای خاموش کردن: {str(e)}")
 
 @app.post("/")
 async def webhook(req: Request):
@@ -611,5 +721,5 @@ async def webhook(req: Request):
         await application.process_update(update)
         return {"ok": True}
     except Exception as e:
-        logger.error(f"خطا در وب‌هوک: {str(e)}")
+        logger.error(f"خطای وب‌هوک: {str(e)}")
         return {"ok": False}
