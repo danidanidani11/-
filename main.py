@@ -269,19 +269,35 @@ async def spin_wheel(user_id: int, context: ContextTypes) -> str:
             update_balance(user_id, 100000)
             prize_msg = "🎉 برنده 100 هزار تومان شدی! موجودی شما افزایش یافت."
             add_prize(user_id, "100 هزار تومان")
+            await context.bot.send_message(
+                ADMIN_ID,
+                f"🏆 کاربر {user_id} برنده {result} شد! لطفاً جایزه را تحویل دهید."
+            )
         elif result == "پریمیوم ۳ ماهه تلگرام":
             prize_msg = "🎁 برنده اشتراک پریمیوم ۳ ماهه تلگرام شدی! لطفا با ادمین تماس کنید."
             add_prize(user_id, "پریمیوم ۳ ماهه تلگرام")
             cursor.execute("INSERT OR REPLACE INTO top_winners (user_id, username, prize, win_time) VALUES (?, ?, ?, ?)",
                          (user_id, context.user_data.get('username', 'Unknown'), result, time.time()))
+            await context.bot.send_message(
+                ADMIN_ID,
+                f"🏆 کاربر {user_id} برنده {result} شد! لطفاً جایزه را تحویل دهید."
+            )
         elif result == "۱۰ میلیون تومان":
             prize_msg = "🏆 برنده ۱۰ میلیون تومان شدی! لطفا با ادمین تماس کنید."
             add_prize(user_id, "۱۰ میلیون تومان")
             cursor.execute("INSERT OR REPLACE INTO top_winners (user_id, username, prize, win_time) VALUES (?, ?, ?, ?)",
                          (user_id, context.user_data.get('username', 'Unknown'), result, time.time()))
+            await context.bot.send_message(
+                ADMIN_ID,
+                f"🏆 کاربر {user_id} برنده {result} شد! لطفاً جایزه را تحویل دهید."
+            )
         elif result == "کتاب رایگان":
-            prize_msg = "📚 برنده کتاب رایگان شدی! لطفا با ادمین تماس بگیرید."
+            prize_msg = "📚 برنده کتاب رایگان شدی! لطفا با ادمین تماس کنید."
             add_prize(user_id, "کتاب رایگان")
+            await context.bot.send_message(
+                ADMIN_ID,
+                f"🏆 کاربر {user_id} برنده {result} شد! لطفاً جایزه را تحویل دهید."
+            )
         elif result == "کد ورود به مرحله پنهان":
             cursor.execute("UPDATE users SET secret_access = 1, last_action = ? WHERE user_id = ?",
                          (time.time(), user_id))
@@ -360,7 +376,7 @@ async def callback_handler(update: Update, context: ContextTypes):
                     [InlineKeyboardButton("🔙 بازگشت", callback_data="back")]
                 ]
                 await query.edit_message_text(
-                    f"❌ موجودی شما کافی نیست. هزینه چرخش: {SPIN_COST} تومان\nموجودی فعلی: {balance} تومان",
+                    f"❌ موجودی شما کافی نیست. هزینه چرخش: {SPIN_COST} تومان | موجودی فعلی: {balance} تومان",
                     reply_markup=InlineKeyboardMarkup(keyboard)
                 )
                 return
@@ -529,13 +545,6 @@ async def handle_messages(update: Update, context: ContextTypes):
             return
 
         if text == "🎯 چرخوندن گردونه":
-            if not rate_limit_check(user_id):
-                await update.message.reply_text(
-                    "❌ لطفاً چند ثانیه صبر کنید و دوباره امتحان کنید.",
-                    reply_markup=chat_menu()
-                )
-                return
-                
             balance = get_balance(user_id)
             if balance < SPIN_COST:
                 keyboard = [
@@ -543,11 +552,12 @@ async def handle_messages(update: Update, context: ContextTypes):
                     [InlineKeyboardButton("🔙 بازگشت", callback_data="back")]
                 ]
                 await update.message.reply_text(
-                    f"❌ موجودی شما کافی نیست. هزینه چرخش: {SPIN_COST} تومان\nموجودی فعلی: {balance} تومان",
+                    f"❌ موجودی شما کافی نیست. هزینه چرخش: {SPIN_COST} تومان | موجودی فعلی: {balance} تومان",
                     reply_markup=InlineKeyboardMarkup(keyboard)
                 )
                 return
 
+            await update.message.reply_text("🎡 گردونه رو بچرخون!", reply_markup=chat_menu())
             update_balance(user_id, -SPIN_COST)
             prize_msg = await spin_wheel(user_id, context)
             await update.message.reply_text(
