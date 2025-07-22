@@ -2,7 +2,6 @@ import os
 import sqlite3
 import random
 import json
-import time
 from fastapi import FastAPI, Request
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, ReplyKeyboardMarkup, KeyboardButton, BotCommand
 from telegram.ext import (
@@ -11,6 +10,7 @@ from telegram.ext import (
 )
 from contextlib import contextmanager
 import hashlib
+import time
 import logging
 from telegram.error import TelegramError
 from tenacity import retry, stop_after_attempt, wait_fixed
@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 # متغیرهای محیطی
 TOKEN = os.getenv("BOT_TOKEN", "8078210260:AAEX-vz_apP68a6WhzaGhuAKK7amC1qUiEY")
 ADMIN_ID = int(os.getenv("ADMIN_ID", 5542927340))
-YOUR_ID = int(os.getenv("YOUR_ID", 123456789))  # آیدی خودتون رو اینجا بذارید
+YOUR_ID = int(os.getenv("YOUR_ID", 123456789))  # آیدی شما رو اینجا بذارید
 CHANNEL_ID = os.getenv("CHANNEL_ID", "@charkhoun")
 TRON_ADDRESS = os.getenv("TRON_ADDRESS", "TJ4xrwKJzKjk6FgKfuuqwah3Az5Ur22kJb")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://0kik4x8alj.onrender.com")
@@ -186,15 +186,6 @@ async def check_channel_membership(user_id: int, context: ContextTypes) -> bool:
             raise
         return False
 
-def rate_limit_check(user_id: int, seconds: int = 5) -> bool:
-    with get_db_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT last_action FROM users WHERE user_id=?", (user_id,))
-        result = cursor.fetchone()
-        if result and result[0]:
-            return time.time() - result[0] > seconds
-        return True
-
 # --------------------------- هندلرها ---------------------------
 
 async def start(update: Update, context: ContextTypes):
@@ -250,10 +241,7 @@ async def menu(update: Update, context: ContextTypes):
 
     await update.message.reply_text("منوی اصلی:", reply_markup=chat_menu())
 
-async def spin_wheel(user_id: int, context: ContextTypes) -> tuple[str, str]:
-    if not rate_limit_check(user_id):
-        return "❌ لطفاً چند ثانیه صبر کنید و دوباره امتحان کنید.", ""
-
+async def spin_wheel(user_id: int, context: ContextTypes) -> str:
     result = random.choices(
         ["پوچ", "100 هزار تومان", "پریمیوم ۳ ماهه تلگرام", "۱۰ میلیون تومان", "کتاب رایگان", "کد ورود به مرحله پنهان"],
         weights=[70, 3, 0.1, 0.01, 5, 21.89],
@@ -267,53 +255,25 @@ async def spin_wheel(user_id: int, context: ContextTypes) -> tuple[str, str]:
             prize_msg = "متاسفانه این بار برنده نشدی! 🎡"
         elif result == "100 هزار تومان":
             update_balance(user_id, 100000)
-            prize_msg = "🎉 برنده 100 هزار تومان شدی! موجودی شما افزایش یافت."
+            prize_msg = "🎉 برنده 100 هزار تومان شدی! لطفاً برای دریافت جایزه به پیوی @daniaam مراجعه کن."
             add_prize(user_id, "100 هزار تومان")
-            await context.bot.send_message(
-                ADMIN_ID,
-                f"🏆 کاربر {user_id} برنده {result} شد! لطفاً جایزه را تحویل دهید."
-            )
-            await context.bot.send_message(
-                YOUR_ID,
-                f"📩 کاربر {user_id} برنده {result} شد. لطفاً جایزه را تحویل دهید."
-            )
+            await context.bot.send_message(ADMIN_ID, f"🏆 کاربر {user_id} برنده {result} شد!")
         elif result == "پریمیوم ۳ ماهه تلگرام":
-            prize_msg = "🎁 برنده اشتراک پریمیوم ۳ ماهه تلگرام شدی! لطفا با ادمین تماس کنید."
+            prize_msg = "🎁 برنده اشتراک پریمیوم ۳ ماهه تلگرام شدی! لطفاً برای دریافت جایزه به پیوی @daniaam مراجعه کن."
             add_prize(user_id, "پریمیوم ۳ ماهه تلگرام")
             cursor.execute("INSERT OR REPLACE INTO top_winners (user_id, username, prize, win_time) VALUES (?, ?, ?, ?)",
                          (user_id, context.user_data.get('username', 'Unknown'), result, time.time()))
-            await context.bot.send_message(
-                ADMIN_ID,
-                f"🏆 کاربر {user_id} برنده {result} شد! لطفاً جایزه را تحویل دهید."
-            )
-            await context.bot.send_message(
-                YOUR_ID,
-                f"📩 کاربر {user_id} برنده {result} شد. لطفاً جایزه را تحویل دهید."
-            )
+            await context.bot.send_message(ADMIN_ID, f"🏆 کاربر {user_id} برنده {result} شد!")
         elif result == "۱۰ میلیون تومان":
-            prize_msg = "🏆 برنده ۱۰ میلیون تومان شدی! لطفا با ادمین تماس کنید."
+            prize_msg = "🏆 برنده ۱۰ میلیون تومان شدی! لطفاً برای دریافت جایزه به پیوی @daniaam مراجعه کن."
             add_prize(user_id, "۱۰ میلیون تومان")
             cursor.execute("INSERT OR REPLACE INTO top_winners (user_id, username, prize, win_time) VALUES (?, ?, ?, ?)",
                          (user_id, context.user_data.get('username', 'Unknown'), result, time.time()))
-            await context.bot.send_message(
-                ADMIN_ID,
-                f"🏆 کاربر {user_id} برنده {result} شد! لطفاً جایزه را تحویل دهید."
-            )
-            await context.bot.send_message(
-                YOUR_ID,
-                f"📩 کاربر {user_id} برنده {result} شد. لطفاً جایزه را تحویل دهید."
-            )
+            await context.bot.send_message(ADMIN_ID, f"🏆 کاربر {user_id} برنده {result} شد!")
         elif result == "کتاب رایگان":
-            prize_msg = "📚 برنده کتاب رایگان شدی! لطفا با ادمین تماس کنید."
+            prize_msg = "📚 برنده کتاب رایگان شدی! لطفاً برای دریافت جایزه به پیوی @daniaam مراجعه کن."
             add_prize(user_id, "کتاب رایگان")
-            await context.bot.send_message(
-                ADMIN_ID,
-                f"🏆 کاربر {user_id} برنده {result} شد! لطفاً جایزه را تحویل دهید."
-            )
-            await context.bot.send_message(
-                YOUR_ID,
-                f"📩 کاربر {user_id} برنده {result} شد. لطفاً جایزه را تحویل دهید."
-            )
+            await context.bot.send_message(ADMIN_ID, f"🏆 کاربر {user_id} برنده {result} شد!")
         elif result == "کد ورود به مرحله پنهان":
             cursor.execute("UPDATE users SET secret_access = 1, last_action = ? WHERE user_id = ?",
                          (time.time(), user_id))
@@ -322,7 +282,7 @@ async def spin_wheel(user_id: int, context: ContextTypes) -> tuple[str, str]:
         conn.commit()
     
     await context.bot.send_message(ADMIN_ID, f"🎡 کاربر {user_id} گردونه را چرخاند و برنده شد: {result}")
-    return prize_msg, result
+    return prize_msg
 
 async def callback_handler(update: Update, context: ContextTypes):
     query = update.callback_query
@@ -378,13 +338,6 @@ async def callback_handler(update: Update, context: ContextTypes):
             context.user_data["deposit_amount"] = amount
 
         elif query.data == "spin":
-            if not rate_limit_check(user_id):
-                await query.edit_message_text(
-                    "❌ لطفاً چند ثانیه صبر کنید و دوباره امتحان کنید.",
-                    reply_markup=back_button()
-                )
-                return
-                
             balance = get_balance(user_id)
             if balance < SPIN_COST:
                 keyboard = [
@@ -398,26 +351,11 @@ async def callback_handler(update: Update, context: ContextTypes):
                 return
 
             update_balance(user_id, -SPIN_COST)
-            message = await query.message.reply_text(
-                "🎡 گردونه در حال چرخش است، لطفاً چند ثانیه صبر کنید...",
+            prize_msg = await spin_wheel(user_id, context)
+            await query.edit_message_text(
+                f"🎡 گردونه در حال چرخش...\n\n{prize_msg}",
                 reply_markup=back_button()
             )
-            time.sleep(2)  # تاخیر ۲ ثانیه‌ای
-            prizes_info = (
-                "📋 جوایز ممکن:\n"
-                "- پوچ: ۷۰٪\n"
-                "- ۱۰۰ هزار تومان: ۳٪\n"
-                "- پریمیوم ۳ ماهه تلگرام: ۰.۱٪\n"
-                "- ۱۰ میلیون تومان: ۰.۰۱٪\n"
-                "- کتاب رایگان: ۵٪\n"
-                "- کد ورود به مرحله پنهان: ۲۱.۸۹٪"
-            )
-            prize_msg, result = await spin_wheel(user_id, context)
-            await query.message.edit_text(
-                f"{prizes_info}\n\n🎉 نتیجه:\n{prize_msg}",
-                reply_markup=back_button()
-            )
-            await context.bot.delete_message(chat_id=message.chat_id, message_id=message.message_id)
 
         elif query.data == "secret":
             await query.edit_message_text(
@@ -527,7 +465,7 @@ async def callback_handler(update: Update, context: ContextTypes):
                 f"✅ درخواست افزایش موجودی شما به مبلغ {amount} تومان تأیید شد.",
                 reply_markup=chat_menu()
             )
-            await query.edit_message_text("✅ درخواست تأیید شد.", reply_markup=chat_menu())
+            await query.edit_message_text("✅ درخواست تأیید شد.", reply_markup=back_button())
 
         elif query.data.startswith("reject_"):
             if user_id != ADMIN_ID:
@@ -541,7 +479,7 @@ async def callback_handler(update: Update, context: ContextTypes):
                 f"❌ درخواست افزایش موجودی شما به مبلغ {amount} تومان رد شد.",
                 reply_markup=chat_menu()
             )
-            await query.edit_message_text("✅ درخواست رد شد.", reply_markup=chat_menu())
+            await query.edit_message_text("✅ درخواست رد شد.", reply_markup=back_button())
 
     except Exception as e:
         logger.error(f"خطای هندلر callback برای کاربر {user_id}: {str(e)}")
@@ -584,24 +522,10 @@ async def handle_messages(update: Update, context: ContextTypes):
                 )
                 return
 
-            await update.message.reply_text(
-                "🎡 گردونه در حال چرخش است، لطفاً چند ثانیه صبر کنید...",
-                reply_markup=chat_menu()
-            )
             update_balance(user_id, -SPIN_COST)
-            time.sleep(2)  # تاخیر ۲ ثانیه‌ای
-            prizes_info = (
-                "📋 جوایز ممکن:\n"
-                "- پوچ: ۷۰٪\n"
-                "- ۱۰۰ هزار تومان: ۳٪\n"
-                "- پریمیوم ۳ ماهه تلگرام: ۰.۱٪\n"
-                "- ۱۰ میلیون تومان: ۰.۰۱٪\n"
-                "- کتاب رایگان: ۵٪\n"
-                "- کد ورود به مرحله پنهان: ۲۱.۸۹٪"
-            )
-            prize_msg, result = await spin_wheel(user_id, context)
+            prize_msg = await spin_wheel(user_id, context)
             await update.message.reply_text(
-                f"{prizes_info}\n\n🎉 نتیجه:\n{prize_msg}",
+                f"🎡 گردونه در حال چرخش...\n\n{prize_msg}",
                 reply_markup=chat_menu()
             )
 
