@@ -6,24 +6,27 @@ from fastapi import FastAPI, Request
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     ApplicationBuilder, ContextTypes,
-    CommandHandler, CallbackQueryHandler, MessageHandler, Filters
+    CommandHandler, CallbackQueryHandler, MessageHandler, filters
 )
 from contextlib import contextmanager
 import hashlib
 import time
-from typing import Optional
 import logging
 from telegram.error import TelegramError
 from tenacity import retry, stop_after_attempt, wait_fixed
+from dotenv import load_dotenv
 
-# Setup logging
+# بارگذاری متغیرهای محیطی
+load_dotenv()
+
+# تنظیم لاگ‌ها
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# Load sensitive data from environment variables
+# متغیرهای تنظیمات
 TOKEN = os.getenv("BOT_TOKEN", "8078210260:AAEX-vz_apP68a6WhzaGhuAKK7amC1qUiEY")
 ADMIN_ID = int(os.getenv("ADMIN_ID", 5542927340))
 CHANNEL_ID = os.getenv("CHANNEL_ID", "@charkhoun")
@@ -38,7 +41,7 @@ SECRET_REWARD = 50000
 
 app = FastAPI()
 
-# Database connection management
+# مدیریت اتصال به دیتابیس
 @contextmanager
 def get_db_connection():
     conn = sqlite3.connect("users.db", check_same_thread=False)
@@ -71,10 +74,10 @@ def init_db():
         ''')
         conn.commit()
 
-# Initialize database
+# مقداردهی اولیه دیتابیس
 init_db()
 
-# --------------------------- Keyboards ---------------------------
+# --------------------------- کیبوردها ---------------------------
 
 def main_menu():
     keyboard = [
@@ -112,7 +115,7 @@ def secret_menu():
     ]
     return InlineKeyboardMarkup(keyboard)
 
-# --------------------------- Utils ---------------------------
+# --------------------------- ابزارهای کمکی ---------------------------
 
 def generate_invite_code(user_id: int) -> str:
     return hashlib.md5(f"{user_id}{time.time()}".encode()).hexdigest()[:8]
@@ -155,15 +158,15 @@ async def check_channel_membership(user_id: int, context: ContextTypes) -> bool:
     try:
         member = await context.bot.get_chat_member(CHANNEL_ID, user_id)
         is_member = member.status in ['member', 'administrator', 'creator']
-        logger.info(f"Membership check for user {user_id}: {'Member' if is_member else 'Not a member'}")
+        logger.info(f"بررسی عضویت برای کاربر {user_id}: {'عضو است' if is_member else 'عضو نیست'}")
         return is_member
     except TelegramError as e:
-        logger.error(f"Telegram API error checking membership for user {user_id}: {str(e)}")
+        logger.error(f"خطای API تلگرام در بررسی عضویت برای کاربر {user_id}: {str(e)}")
         if STRICT_MEMBERSHIP:
             raise
         return False
     except Exception as e:
-        logger.error(f"Unexpected error checking membership for user {user_id}: {str(e)}")
+        logger.error(f"خطای غیرمنتظره در بررسی عضویت برای کاربر {user_id}: {str(e)}")
         if STRICT_MEMBERSHIP:
             raise
         return False
@@ -177,7 +180,7 @@ def rate_limit_check(user_id: int, seconds: int = 5) -> bool:
             return time.time() - result[0] > seconds
         return True
 
-# --------------------------- Handlers ---------------------------
+# --------------------------- هندلرها ---------------------------
 
 async def start(update: Update, context: ContextTypes):
     user = update.effective_user
@@ -191,7 +194,7 @@ async def start(update: Update, context: ContextTypes):
             )
             return
     except Exception as e:
-        logger.error(f"Membership check failed for user {user.id}: {str(e)}")
+        logger.error(f"خطا در بررسی عضویت برای کاربر {user.id}: {str(e)}")
         await update.message.reply_text(
             "⚠️ خطایی در بررسی عضویت رخ داد. لطفاً دوباره امتحان کنید یا با پشتیبانی تماس بگیرید.",
             reply_markup=back_button()
@@ -221,9 +224,10 @@ async def spin_wheel(user_id: int, context: ContextTypes) -> str:
     if not rate_limit_check(user_id):
         return "❌ لطفاً چند ثانیه صبر کنید و دوباره امتحان کنید."
     
+    # وزن‌ها نرمال‌سازی شده تا جمعشون 100 باشه
     result = random.choices(
         ["پوچ", "100 هزار تومان", "پریمیوم ۳ ماهه تلگرام", "۱۰ میلیون تومان", "کتاب رایگان", "کد ورود به مرحله پنهان"],
-        weights=[70, 3, 0.1, 0.01, 5, 21.89],
+        weights=[70, 3, 0.1, 0.01, 5, 21.9],
         k=1
     )[0]
     
@@ -240,12 +244,12 @@ async def spin_wheel(user_id: int, context: ContextTypes) -> str:
             prize_msg = "🎁 برنده اشتراک پریمیوم ۳ ماهه تلگرام شدی! لطفا با ادمین تماس کنید."
             add_prize(user_id, "پریمیوم ۳ ماهه تلگرام")
             cursor.execute("INSERT OR REPLACE INTO top_winners (user_id, username, prize, win_time) VALUES (?, ?, ?, ?)",
-                         (user_id, context._user_data.get('username', 'Unknown'), result, time.time()))
+                         (user_id, update.effective_user.username or 'Unknown', result, time.time()))
         elif result == "۱۰ میلیون تومان":
             prize_msg = "🏆 برنده ۱۰ میلیون تومان شدی! لطفا با ادمین تماس بگیرید."
             add_prize(user_id, "۱۰ میلیون تومان")
             cursor.execute("INSERT OR REPLACE INTO top_winners (user_id, username, prize, win_time) VALUES (?, ?, ?, ?)",
-                         (user_id, context._user_data.get('username', 'Unknown'), result, time.time()))
+                         (user_id, update.effective_user.username or 'Unknown', result, time.time()))
         elif result == "کتاب رایگان":
             prize_msg = "📚 برنده کتاب رایگان شدی! لطفا با ادمین تماس بگیرید."
             add_prize(user_id, "کتاب رایگان")
@@ -274,7 +278,7 @@ async def callback_handler(update: Update, context: ContextTypes):
             )
             return
     except Exception as e:
-        logger.error(f"Membership check failed in callback for user {user_id}: {str(e)}")
+        logger.error(f"خطا در بررسی عضویت در هندلر callback برای کاربر {user_id}: {str(e)}")
         await query.edit_message_text(
             "⚠️ خطایی در بررسی عضویت رخ داد. لطفاً دوباره امتحان کنید یا با پشتیبانی تماس بگیرید.",
             reply_markup=back_button()
@@ -439,7 +443,7 @@ async def callback_handler(update: Update, context: ContextTypes):
             )
 
     except Exception as e:
-        logger.error(f"Callback handler error for user {user_id}: {str(e)}")
+        logger.error(f"خطا در هندلر callback برای کاربر {user_id}: {str(e)}")
         await query.edit_message_text(
             f"❌ خطایی رخ داد: {str(e)}\nلطفاً دوباره امتحان کنید.",
             reply_markup=back_button()
@@ -457,7 +461,7 @@ async def handle_messages(update: Update, context: ContextTypes):
             )
             return
     except Exception as e:
-        logger.error(f"Membership check failed in message handler for user {user_id}: {str(e)}")
+        logger.error(f"خطا در بررسی عضویت در هندلر پیام برای کاربر {user_id}: {str(e)}")
         await update.message.reply_text(
             "⚠️ خطایی در بررسی عضویت رخ داد. لطفاً دوباره امتحان کنید یا با پشتیبانی تماس بگیرید.",
             reply_markup=back_button()
@@ -530,7 +534,7 @@ async def handle_messages(update: Update, context: ContextTypes):
             )
 
     except Exception as e:
-        logger.error(f"Message handler error for user {user_id}: {str(e)}")
+        logger.error(f"خطا در هندلر پیام برای کاربر {user_id}: {str(e)}")
         await update.message.reply_text(
             f"❌ خطایی رخ داد: {str(e)}\nلطفاً دوباره امتحان کنید.",
             reply_markup=back_button()
@@ -563,20 +567,20 @@ async def handle_admin_approval(update: Update, context: ContextTypes):
             else:
                 await update.message.reply_text("لطفاً فقط 'تایید' یا 'رد' بنویسید.")
         except Exception as e:
-            logger.error(f"Admin approval error: {str(e)}")
+            logger.error(f"خطا در تایید ادمین: {str(e)}")
             await update.message.reply_text(f"خطا در پردازش: {str(e)}")
 
-# --------------------------- Register Handlers ---------------------------
+# --------------------------- ثبت هندلرها ---------------------------
 
 application = ApplicationBuilder().token(TOKEN).build()
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("menu", menu))
 application.add_handler(CallbackQueryHandler(callback_handler))
-application.add_handler(MessageHandler(Filters.TEXT & ~Filters.COMMAND, handle_messages))
-application.add_handler(MessageHandler(Filters.PHOTO & ~Filters.COMMAND, handle_messages))
-application.add_handler(MessageHandler(Filters.TEXT & ~Filters.COMMAND, handle_admin_approval))
+application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_messages))
+application.add_handler(MessageHandler(filters.PHOTO & ~filters.COMMAND, handle_messages))
+application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_admin_approval))
 
-# --------------------------- FastAPI Webhook ---------------------------
+# --------------------------- وب‌هوک FastAPI ---------------------------
 
 @app.on_event("startup")
 async def on_startup():
@@ -585,9 +589,9 @@ async def on_startup():
         await application.bot.set_webhook(WEBHOOK_URL)
         await application.initialize()
         await application.start()
-        logger.info("Bot started and webhook set successfully")
+        logger.info("ربات با موفقیت راه‌اندازی شد و وب‌هوک تنظیم شد")
     except Exception as e:
-        logger.error(f"Startup error: {str(e)}")
+        logger.error(f"خطا در راه‌اندازی: {str(e)}")
         raise
 
 @app.on_event("shutdown")
@@ -595,9 +599,9 @@ async def on_shutdown():
     try:
         await application.stop()
         await application.shutdown()
-        logger.info("Bot stopped successfully")
+        logger.info("ربات با موفقیت متوقف شد")
     except Exception as e:
-        logger.error(f"Shutdown error: {str(e)}")
+        logger.error(f"خطا در خاموش کردن: {str(e)}")
 
 @app.post("/")
 async def webhook(req: Request):
@@ -607,5 +611,5 @@ async def webhook(req: Request):
         await application.process_update(update)
         return {"ok": True}
     except Exception as e:
-        logger.error(f"Webhook error: {str(e)}")
+        logger.error(f"خطا در وب‌هوک: {str(e)}")
         return {"ok": False}
