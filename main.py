@@ -95,7 +95,7 @@ def chat_menu():
         [KeyboardButton("🎯 چرخوندن گردونه"), KeyboardButton("💰 موجودی")],
         [KeyboardButton("🕵️ مرحله پنهان"), KeyboardButton("🏆 خوش‌شانس‌ترین‌ها")],
         [KeyboardButton("👤 پروفایل"), KeyboardButton("📢 دعوت دوستان")],
-        [KeyboardButton("📌 منو")]
+        [KeyboardButton("📌 منو"), KeyboardButton("/start")]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
@@ -120,6 +120,13 @@ def secret_menu():
         [InlineKeyboardButton("خرید مرحله پنهان", callback_data="buy_secret_access")],
         [InlineKeyboardButton("وارد کردن کد ورود", callback_data="enter_secret_code")],
         [InlineKeyboardButton("🔙 بازگشت", callback_data="back")]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+def admin_approval_buttons(user_id: int, amount: int):
+    keyboard = [
+        [InlineKeyboardButton("✅ تأیید", callback_data=f"approve_{user_id}_{amount}")],
+        [InlineKeyboardButton("❌ رد", callback_data=f"reject_{user_id}_{amount}")]
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -273,7 +280,7 @@ async def spin_wheel(user_id: int, context: ContextTypes) -> str:
             cursor.execute("INSERT OR REPLACE INTO top_winners (user_id, username, prize, win_time) VALUES (?, ?, ?, ?)",
                          (user_id, context.user_data.get('username', 'Unknown'), result, time.time()))
         elif result == "کتاب رایگان":
-            prize_msg = "📚 برنده کتاب رایگان شدی! لطفا با ادمین تماس کنید."
+            prize_msg = "📚 برنده کتاب رایگان شدی! لطفا با ادمین تماس بگیرید."
             add_prize(user_id, "کتاب رایگان")
         elif result == "کد ورود به مرحله پنهان":
             cursor.execute("UPDATE users SET secret_access = 1, last_action = ? WHERE user_id = ?",
@@ -460,6 +467,35 @@ async def callback_handler(update: Update, context: ContextTypes):
                 reply_markup=back_button()
             )
 
+        elif query.data.startswith("approve_"):
+            if user_id != ADMIN_ID:
+                await query.edit_message_text("❌ شما اجازه انجام این عملیات را ندارید.")
+                return
+            _, target_user_id, amount = query.data.split("_")
+            target_user_id = int(target_user_id)
+            amount = int(amount)
+            update_balance(target_user_id, amount)
+            await context.bot.send_message(
+                target_user_id,
+                f"✅ درخواست افزایش موجودی شما به مبلغ {amount} تومان تأیید شد.",
+                reply_markup=chat_menu()
+            )
+            await query.edit_message_text("✅ درخواست تأیید شد.", reply_markup=chat_menu())
+
+        elif query.data.startswith("reject_"):
+            if user_id != ADMIN_ID:
+                await query.edit_message_text("❌ شما اجازه انجام این عملیات را ندارید.")
+                return
+            _, target_user_id, amount = query.data.split("_")
+            target_user_id = int(target_user_id)
+            amount = int(amount)
+            await context.bot.send_message(
+                target_user_id,
+                f"❌ درخواست افزایش موجودی شما به مبلغ {amount} تومان رد شد.",
+                reply_markup=chat_menu()
+            )
+            await query.edit_message_text("✅ درخواست رد شد.", reply_markup=chat_menu())
+
     except Exception as e:
         logger.error(f"خطای هندلر callback برای کاربر {user_id}: {str(e)}")
         await query.edit_message_text(
@@ -488,7 +524,7 @@ async def handle_messages(update: Update, context: ContextTypes):
         return
 
     try:
-        if text == "📌 منو":
+        if text == "📌 منو" or text == "/start":
             await update.message.reply_text("منوی اصلی:", reply_markup=chat_menu())
             return
 
@@ -628,12 +664,14 @@ async def handle_messages(update: Update, context: ContextTypes):
                 await context.bot.send_photo(
                     ADMIN_ID,
                     photo,
-                    caption=f"📤 درخواست افزایش موجودی\n\nکاربر: {user_id}\nمبلغ: {amount} تومان"
+                    caption=f"📤 درخواست افزایش موجودی\n\nکاربر: {user_id}\nمبلغ: {amount} تومان",
+                    reply_markup=admin_approval_buttons(user_id, amount)
                 )
             else:
                 await context.bot.send_message(
                     ADMIN_ID,
-                    f"📤 درخواست افزایش موجودی\n\nکاربر: {user_id}\nمبلغ: {amount} تومان\n\nرسید:\n{text}"
+                    f"📤 درخواست افزایش موجودی\n\nکاربر: {user_id}\nمبلغ: {amount} تومان\n\nرسید:\n{text}",
+                    reply_markup=admin_approval_buttons(user_id, amount)
                 )
             
             await update.message.reply_text(
@@ -648,38 +686,6 @@ async def handle_messages(update: Update, context: ContextTypes):
             reply_markup=chat_menu()
         )
 
-async def handle_admin_approval(update: Update, context: ContextTypes):
-    if update.effective_user.id != ADMIN_ID:
-        return
-    
-    if update.message.reply_to_message and "درخواست افزایش موجودی" in update.message.reply_to_message.text:
-        try:
-            reply_text = update.message.reply_to_message.text
-            user_id = int(reply_text.split("کاربر:")[1].split("\n")[0].strip())
-            amount = int(reply_text.split("مبلغ:")[1].split("تومان")[0].strip())
-            text = update.message.text.lower()
-            
-            if "تایید" in text:
-                update_balance(user_id, amount)
-                await context.bot.send_message(
-                    user_id,
-                    f"✅ درخواست افزایش موجودی شما به مبلغ {amount} تومان تایید شد.",
-                    reply_markup=chat_menu()
-                )
-                await update.message.reply_text("✅ درخواست تایید شد.", reply_markup=chat_menu())
-            elif "رد" in text:
-                await context.bot.send_message(
-                    user_id,
-                    f"❌ درخواست افزایش موجودی شما به مبلغ {amount} تومان رد شد.",
-                    reply_markup=chat_menu()
-                )
-                await update.message.reply_text("✅ درخواست رد شد.", reply_markup=chat_menu())
-            else:
-                await update.message.reply_text("لطفاً فقط 'تایید' یا 'رد' بنویسید.", reply_markup=chat_menu())
-        except Exception as e:
-            logger.error(f"خطای تایید ادمین: {str(e)}")
-            await update.message.reply_text(f"خطا در پردازش: {str(e)}", reply_markup=chat_menu())
-
 # --------------------------- ثبت هندلرها ---------------------------
 
 application = ApplicationBuilder().token(TOKEN).build()
@@ -688,7 +694,6 @@ application.add_handler(CommandHandler("menu", menu))
 application.add_handler(CallbackQueryHandler(callback_handler))
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_messages))
 application.add_handler(MessageHandler(filters.PHOTO & ~filters.COMMAND, handle_messages))
-application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_admin_approval))
 
 # --------------------------- وب‌هوک FastAPI ---------------------------
 
