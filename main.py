@@ -87,7 +87,8 @@ def main_menu():
         [InlineKeyboardButton("🕵️ مرحله پنهان", callback_data="secret")],
         [InlineKeyboardButton("🏆 خوش‌شانس‌ترین‌ها", callback_data="top")],
         [InlineKeyboardButton("👤 پروفایل", callback_data="profile")],
-        [InlineKeyboardButton("📢 دعوت دوستان", callback_data="invite")]
+        [InlineKeyboardButton("📢 دعوت دوستان", callback_data="invite")],
+        [InlineKeyboardButton("🎁 جوایز", callback_data="prizes")]
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -95,7 +96,8 @@ def chat_menu():
     keyboard = [
         [KeyboardButton("🎯 چرخوندن گردونه"), KeyboardButton("💰 موجودی")],
         [KeyboardButton("🕵️ مرحله پنهان"), KeyboardButton("🏆 خوش‌شانس‌ترین‌ها")],
-        [KeyboardButton("👤 پروفایل"), KeyboardButton("📢 دعوت دوستان")]
+        [KeyboardButton("👤 پروفایل"), KeyboardButton("📢 دعوت دوستان")],
+        [KeyboardButton("🎁 جوایز")]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
@@ -452,6 +454,10 @@ async def callback_handler(update: Update, context: ContextTypes):
                 reply_markup=back_button()
             )
 
+        elif query.data == "prizes":
+            prizes_list = "🎁 جوایز موجود:\n\n- پوچ\n- 100 هزار تومان\n- پریمیوم ۳ ماهه تلگرام\n- ۱۰ میلیون تومان\n- کتاب رایگان\n- کد ورود به مرحله پنهان"
+            await query.edit_message_text(prizes_list, reply_markup=back_button())
+
         elif query.data.startswith("approve_"):
             if user_id != ADMIN_ID:
                 await query.edit_message_text("❌ شما اجازه انجام این عملیات را ندارید.", reply_markup=back_button())
@@ -586,6 +592,10 @@ async def handle_messages(update: Update, context: ContextTypes):
                 "با دعوت هر دوست 2000 تومان جایزه بگیر!",
                 reply_markup=chat_menu()
             )
+
+        elif text == "🎁 جوایز":
+            prizes_list = "🎁 جوایز موجود:\n\n- پوچ\n- 100 هزار تومان\n- پریمیوم ۳ ماهه تلگرام\n- ۱۰ میلیون تومان\n- کتاب رایگان\n- کد ورود به مرحله پنهان"
+            await update.message.reply_text(prizes_list, reply_markup=chat_menu())
 
         elif context.user_data.get("waiting_for_secret_guess"):
             context.user_data["waiting_for_secret_guess"] = False
