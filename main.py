@@ -35,7 +35,7 @@ TRON_ADDRESS = os.getenv("TRON_ADDRESS", "TJ4xrwKJzKjk6FgKfuuqwah3Az5Ur22kJb")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://0kik4x8alj.onrender.com")
 STRICT_MEMBERSHIP = os.getenv("STRICT_MEMBERSHIP", "true").lower() == "true"
 
-SPIN_COST = 50
+SPIN_COST = 50000
 SECRET_COST = 5000
 INVITE_REWARD = 2000
 SECRET_REWARD = 50000
