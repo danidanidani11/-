@@ -11,13 +11,18 @@ from telegram.ext import (
     ContextTypes,
     ConversationHandler
 )
+from flask import Flask, request, jsonify
 import asyncio
+from threading import Thread
 
 # Logging configuration
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO
 )
 logger = logging.getLogger(__name__)
+
+# Flask app
+flask_app = Flask(__name__)
 
 # Bot configuration
 TOKEN = '8078210260:AAEX-vz_apP68a6WhzaGhuAKK7amC1qUiEY'
@@ -734,9 +739,39 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return ConversationHandler.END
 
-# Main function
+# Process text messages
+async def process_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if context.user_data.get('waiting_for_code', False):
+        await process_hidden_code(update, context)
+    elif 'deposit_amount' in context.user_data:
+        await process_deposit_proof(update, context)
+    else:
+        await update.message.reply_text(
+            "لطفاً از منوی ربات استفاده کنید.",
+            reply_markup=get_main_menu_keyboard()
+        )
+
+# Flask routes
+@flask_app.route('/')
+def home():
+    return "Telegram Wheel Bot is running!"
+
+@flask_app.route('/webhook', methods=['POST'])
+def webhook():
+    # You can add webhook functionality here if needed
+    return jsonify({"status": "ok"})
+
+# Run Flask in a separate thread
+def run_flask():
+    flask_app.run(host='0.0.0.0', port=5000)
+
+# Main function to start both Flask and Telegram Bot
 async def main():
-    # Create the Application
+    # Start Flask in a separate thread
+    flask_thread = Thread(target=run_flask)
+    flask_thread.start()
+
+    # Create the Telegram Bot Application
     application = Application.builder().token(TOKEN).build()
 
     # Add conversation handler for hidden stage game
@@ -783,18 +818,6 @@ async def main():
         await application.updater.stop()
         await application.stop()
         await application.shutdown()
-
-# Process text messages
-async def process_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if context.user_data.get('waiting_for_code', False):
-        await process_hidden_code(update, context)
-    elif 'deposit_amount' in context.user_data:
-        await process_deposit_proof(update, context)
-    else:
-        await update.message.reply_text(
-            "لطفاً از منوی ربات استفاده کنید.",
-            reply_markup=get_main_menu_keyboard()
-        )
 
 if __name__ == '__main__':
     loop = asyncio.get_event_loop()
