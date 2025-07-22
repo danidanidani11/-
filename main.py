@@ -396,7 +396,7 @@ async def process_deposit_proof(update: Update, context: ContextTypes.DEFAULT_TY
         await update.message.reply_text("❌ خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
 # Handle admin decision
-async def handle_admin_decision(update: Update, context: ContextTypes.GROK):
+async def handle_admin_decision(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     data = query.data.split('_')
     action = data[0]
