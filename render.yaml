@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: wheel-bot
+    runtime: python
+    buildCommand: |
+      pip install --upgrade pip
+      pip install -r requirements.txt
+    startCommand: gunicorn --worker-class gevent --bind :10000 main:flask_app
+    env: python
+    envVars:
+      - key: TOKEN
+        value: your-telegram-bot-token
+      - key: ADMIN_ID
+        value: your-admin-id
+      - key: CHANNEL_USERNAME
+        value: your-channel-username
+    plan: free
