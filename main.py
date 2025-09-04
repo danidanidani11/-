@@ -15,7 +15,8 @@ import logging
 from telegram.error import TelegramError
 from tenacity import retry, stop_after_attempt, wait_fixed
 from dotenv import load_dotenv
-from datetime import datetime  # اضافه کردن برای مدیریت زمان
+from datetime import datetime
+import asyncio
 
 # تنظیم لاگ‌ها برای دیباگ بهتر
 logging.basicConfig(
@@ -57,6 +58,7 @@ def init_db():
     try:
         with get_db_connection() as conn:
             cursor = conn.cursor()
+            # اطمینان از وجود ستون invite_code
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS users (
                     user_id BIGINT PRIMARY KEY,
@@ -77,6 +79,10 @@ def init_db():
                     last_win TIMESTAMP
                 )
             ''')
+            # اضافه کردن ستون invite_code اگه وجود نداشته باشه
+            cursor.execute('''
+                ALTER TABLE users ADD COLUMN IF NOT EXISTS invite_code TEXT UNIQUE
+            ''')
             conn.commit()
             logger.info("دیتابیس با موفقیت مقداردهی شد")
     except Exception as e:
@@ -92,8 +98,9 @@ def get_or_create_user(user_id: int) -> None:
     try:
         with get_db_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT user_id FROM users WHERE user_id = %s", (user_id,))
-            if not cursor.fetchone():
+            cursor.execute("SELECT user_id, invite_code FROM users WHERE user_id = %s", (user_id,))
+            user = cursor.fetchone()
+            if not user:
                 invite_code = generate_invite_code(user_id)
                 cursor.execute(
                     "INSERT INTO users (user_id, spins, last_action, invite_code) VALUES (%s, %s, %s, %s)",
@@ -101,6 +108,14 @@ def get_or_create_user(user_id: int) -> None:
                 )
                 conn.commit()
                 logger.info(f"کاربر جدید ایجاد شد: {user_id}")
+            elif not user[1]:  # اگر invite_code خالی باشه
+                invite_code = generate_invite_code(user_id)
+                cursor.execute(
+                    "UPDATE users SET invite_code = %s WHERE user_id = %s",
+                    (invite_code, user_id)
+                )
+                conn.commit()
+                logger.info(f"invite_code برای کاربر {user_id} به‌روزرسانی شد")
     except Exception as e:
         logger.error(f"خطا در get_or_create_user برای کاربر {user_id}: {str(e)}")
         raise
@@ -149,7 +164,8 @@ def get_user_data(user_id: int) -> tuple:
         with get_db_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT balance, invites, total_earnings, card_number FROM users WHERE user_id = %s", (user_id,))
-            return cursor.fetchone()
+            result = cursor.fetchone()
+            return result if result else (0, 0, 0, None)
     except Exception as e:
         logger.error(f"خطا در get_user_data برای کاربر {user_id}: {str(e)}")
         raise
@@ -242,10 +258,13 @@ async def stats(update: Update, context: ContextTypes):
             total_users = cursor.fetchone()[0]
             cursor.execute("SELECT SUM(invites) FROM users")
             total_invites = cursor.fetchone()[0] or 0
+            cursor.execute("SELECT SUM(total_earnings) FROM users")
+            total_earnings = cursor.fetchone()[0] or 0
         await update.message.reply_text(
             f"📊 آمار ربات:\n\n"
             f"👥 تعداد کل کاربران: {total_users}\n"
-            f"📢 تعداد کل دعوت‌ها: {total_invites}",
+            f"📢 تعداد کل دعوت‌ها: {total_invites}\n"
+            f"💰 مجموع درآمد کاربران: {total_earnings} تومان",
             reply_markup=chat_menu()
         )
     except Exception as e:
@@ -324,14 +343,23 @@ async def start(update: Update, context: ContextTypes):
                     cursor.execute("UPDATE users SET invites = invites + 1 WHERE user_id = %s", (referrer[0],))
                     conn.commit()
                     logger.info(f"کاربر {user.id} از طریق دعوت {ref_code} ثبت شد")
+                    await update.message.reply_text(
+                        "🎉 تبریک! از طریق دعوت یه دوست وارد شدی و اون یه چرخش رایگان گرفت!",
+                        reply_markup=chat_menu()
+                    )
+        else:
+            await update.message.reply_text(
+                "🎉 خوش آمدی به گردونه شانس!\n\n"
+                "دو چرخش رایگان داری! با هر دعوت موفق، یه چرخش دیگه بگیر!\n"
+                "برای شروع، یکی از گزینه‌های زیر رو انتخاب کن:",
+                reply_markup=chat_menu()
+            )
     except Exception as e:
         logger.error(f"خطا در پردازش کد دعوت برای کاربر {user.id}: {str(e)}")
-
-    await update.message.reply_text(
-        "🎉 خوش آمدی به گردونه شانس!\n\n"
-        "دو چرخش رایگان داری! با هر دعوت موفق، یک چرخش دیگه بگیر!",
-        reply_markup=chat_menu()
-    )
+        await update.message.reply_text(
+            f"❌ خطایی رخ داد: {str(e)}\nلطفاً دوباره امتحان کنید یا با پشتیبانی تماس بگیرید.",
+            reply_markup=back_button()
+        )
 
 async def menu(update: Update, context: ContextTypes):
     user_id = update.effective_user.id
@@ -342,18 +370,33 @@ async def menu(update: Update, context: ContextTypes):
                 f"⚠️ لطفا ابتدا در کانال ما عضو شوید:\n{CHANNEL_ID}\nسپس دوباره امتحان کنید."
             )
             return
+        await update.message.reply_text("منوی اصلی:", reply_markup=chat_menu())
     except Exception as e:
         logger.error(f"خطای بررسی عضویت در منو برای کاربر {user_id}: {str(e)}")
         await update.message.reply_text(
             "⚠️ خطایی در بررسی عضویت رخ داد. لطفاً دوباره امتحان کنید یا با پشتیبانی تماس بگیرید.",
             reply_markup=back_button()
         )
-        return
-
-    await update.message.reply_text("منوی اصلی:", reply_markup=chat_menu())
 
 async def spin_wheel(user_id: int, context: ContextTypes) -> tuple:
     try:
+        # ایجاد حس هیجان با پیام‌های چندمرحله‌ای
+        await context.bot.send_message(
+            user_id,
+            "🎡 گردونه شانس در حال چرخیدنه... آماده باش! 🌀"
+        )
+        await asyncio.sleep(1)
+        await context.bot.send_message(
+            user_id,
+            "⚡ سرعتش داره بیشتر می‌شه... چی قراره برنده شی؟! 😎"
+        )
+        await asyncio.sleep(1)
+        await context.bot.send_message(
+            user_id,
+            "⏳ لحظه حقیقت نزدیکه... 🎉"
+        )
+        await asyncio.sleep(1)
+
         amount = random.choices(
             [random.randint(20000, 50000), random.randint(50001, 100000), random.randint(100001, 300000)],
             weights=[70, 25, 5],
@@ -373,8 +416,11 @@ async def spin_wheel(user_id: int, context: ContextTypes) -> tuple:
             )
             conn.commit()
         
-        await context.bot.send_message(ADMIN_ID, f"🎡 کاربر {user_id} گردونه را چرخاند و برنده شد: {amount} تومان")
-        return amount, f"🎉 شما برنده {amount} تومان شدید!"
+        await context.bot.send_message(
+            ADMIN_ID,
+            f"🎡 کاربر {user_id} گردونه رو چرخوند و برنده شد: {amount:,} تومان"
+        )
+        return amount, f"🎉 تبریک! شما برنده {amount:,} تومان شدید! 🎊\nدوباره بچرخون یا دوستاتو دعوت کن تا چرخش بیشتر بگیری!"
     except Exception as e:
         logger.error(f"خطا در spin_wheel برای کاربر {user_id}: {str(e)}")
         raise
@@ -417,25 +463,22 @@ async def callback_handler(update: Update, context: ContextTypes):
 
         elif query.data == "balance":
             balance, spins = get_balance_and_spins(user_id)
+            msg = (
+                f"💰 موجودی شما: {balance:,} تومان\n"
+                f"🎡 تعداد چرخش‌های رایگان: {spins}\n\n"
+                "📝 برای برداشت، موجودی شما باید حداقل ۲,۰۰۰,۰۰۰ تومان باشه.\n"
+                "با چرخوندن گردونه یا دعوت دوستان، موجودیتو افزایش بده!"
+            )
             if balance >= MIN_WITHDRAWAL:
-                await query.edit_message_text(
-                    f"💰 موجودی شما: {balance} تومان\n"
-                    f"🎡 تعداد چرخش‌ها: {spins}",
-                    reply_markup=withdrawal_menu()
-                )
+                await query.edit_message_text(msg, reply_markup=withdrawal_menu())
             else:
-                await query.edit_message_text(
-                    f"💰 موجودی شما: {balance} تومان\n"
-                    f"🎡 تعداد چرخش‌ها: {spins}\n\n"
-                    f"برای برداشت وجه، موجودی باید حداقل {MIN_WITHDRAWAL} تومان باشد.",
-                    reply_markup=back_button()
-                )
+                await query.edit_message_text(msg, reply_markup=back_button())
 
         elif query.data == "withdraw":
             balance, _ = get_balance_and_spins(user_id)
             if balance < MIN_WITHDRAWAL:
                 await query.edit_message_text(
-                    f"❌ موجودی شما برای برداشت کافی نیست. حداقل موجودی: {MIN_WITHDRAWAL} تومان",
+                    f"❌ موجودی شما برای برداشت کافی نیست. حداقل موجودی: {MIN_WITHDRAWAL:,} تومان",
                     reply_markup=back_button()
                 )
                 return
@@ -449,7 +492,7 @@ async def callback_handler(update: Update, context: ContextTypes):
                 )
             else:
                 await query.edit_message_text(
-                    "💸 لطفاً شماره کارت خود را برای برداشت وارد کنید:",
+                    "💸 لطفاً شماره کارت ۱۶ رقمی خود را برای برداشت وارد کنید:",
                     reply_markup=back_button()
                 )
                 context.user_data["waiting_for_card_number"] = True
@@ -458,27 +501,24 @@ async def callback_handler(update: Update, context: ContextTypes):
             balance, spins = get_balance_and_spins(user_id)
             if spins <= 0:
                 await query.edit_message_text(
-                    "❌ شما چرخش رایگان ندارید. با دعوت دوستان چرخش جدید بگیرید!",
+                    "❌ شما چرخش رایگان ندارید! 😕\nدوستاتو دعوت کن تا چرخش جدید بگیری!",
                     reply_markup=back_button()
                 )
                 return
 
             amount, prize_msg = await spin_wheel(user_id, context)
-            await query.edit_message_text(
-                f"🎡 گردونه در حال چرخش...\n\n{prize_msg}",
-                reply_markup=back_button()
-            )
+            await query.edit_message_text(prize_msg, reply_markup=back_button())
 
         elif query.data == "top":
             with get_db_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute("SELECT user_id, username, total_earnings FROM top_winners ORDER BY total_earnings DESC LIMIT 10")
                 rows = cursor.fetchall()
-            msg = "🏆 پر درآمد ها:\n\n"
+            msg = "🏆 پر درآمدهای گردونه شانس:\n\n"
             for i, row in enumerate(rows, 1):
-                msg += f"{i}. @{row[1] or 'Unknown'} - درآمد: {row[2]} تومان\n"
+                msg += f"{i}. @{row[1] or 'Unknown'} - درآمد: {row[2]:,} تومان\n"
             if not rows:
-                msg = "هنوز برنده‌ای ثبت نشده است."
+                msg = "🏆 هنوز برنده‌ای ثبت نشده! تو اولین باش! 😎"
             await query.edit_message_text(msg, reply_markup=back_button())
 
         elif query.data == "profile":
@@ -486,9 +526,10 @@ async def callback_handler(update: Update, context: ContextTypes):
             balance, invites, total_earnings, _ = user_data
             await query.edit_message_text(
                 f"👤 پروفایل شما:\n\n"
-                f"💰 موجودی: {balance} تومان\n"
-                f"👥 دعوت موفق: {invites} نفر\n"
-                f"💸 درآمد کل: {total_earnings} تومان",
+                f"💰 موجودی: {balance:,} تومان\n"
+                f"👥 دعوت‌های موفق: {invites} نفر\n"
+                f"💸 درآمد کل: {total_earnings:,} تومان\n\n"
+                f"با دعوت دوستان، چرخش‌های رایگان بیشتری بگیر!",
                 reply_markup=back_button()
             )
 
@@ -496,11 +537,12 @@ async def callback_handler(update: Update, context: ContextTypes):
             with get_db_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute("SELECT invite_code FROM users WHERE user_id = %s", (user_id,))
-                invite_code = cursor.fetchone()[0]
+                result = cursor.fetchone()
+                invite_code = result[0] if result else generate_invite_code(user_id)
             invite_link = f"https://t.me/charkhoon_bot?start={invite_code}"
             await query.edit_message_text(
-                f"📢 لینک دعوت شما:\n{invite_link}\n\n"
-                "با هر دعوت موفق، یک چرخش رایگان بگیر!",
+                f"📢 لینک دعوت اختصاصی شما:\n{invite_link}\n\n"
+                "دوستاتو دعوت کن و با هر دعوت موفق، یه چرخش رایگان بگیر! 🚀",
                 reply_markup=back_button()
             )
 
@@ -537,43 +579,37 @@ async def handle_messages(update: Update, context: ContextTypes):
             balance, spins = get_balance_and_spins(user_id)
             if spins <= 0:
                 await update.message.reply_text(
-                    "❌ شما چرخش رایگان ندارید. با دعوت دوستان چرخش جدید بگیرید!",
+                    "❌ شما چرخش رایگان ندارید! 😕\nدوستاتو دعوت کن تا چرخش جدید بگیری!",
                     reply_markup=chat_menu()
                 )
                 return
 
             amount, prize_msg = await spin_wheel(user_id, context)
-            await update.message.reply_text(
-                f"🎡 گردونه در حال چرخش...\n\n{prize_msg}",
-                reply_markup=chat_menu()
-            )
+            await update.message.reply_text(prize_msg, reply_markup=chat_menu())
 
         elif text == "💰 موجودی":
             balance, spins = get_balance_and_spins(user_id)
+            msg = (
+                f"💰 موجودی شما: {balance:,} تومان\n"
+                f"🎡 تعداد چرخش‌های رایگان: {spins}\n\n"
+                "📝 برای برداشت، موجودی شما باید حداقل ۲,۰۰۰,۰۰۰ تومان باشه.\n"
+                "با چرخوندن گردونه یا دعوت دوستان، موجودیتو افزایش بده!"
+            )
             if balance >= MIN_WITHDRAWAL:
-                await update.message.reply_text(
-                    f"💰 موجودی شما: {balance} تومان\n"
-                    f"🎡 تعداد چرخش‌ها: {spins}",
-                    reply_markup=withdrawal_menu()
-                )
+                await update.message.reply_text(msg, reply_markup=withdrawal_menu())
             else:
-                await update.message.reply_text(
-                    f"💰 موجودی شما: {balance} تومان\n"
-                    f"🎡 تعداد چرخش‌ها: {spins}\n\n"
-                    f"برای برداشت وجه، موجودی باید حداقل {MIN_WITHDRAWAL} تومان باشد.",
-                    reply_markup=back_button()
-                )
+                await update.message.reply_text(msg, reply_markup=back_button())
 
         elif text == "🏆 پر درآمد ها":
             with get_db_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute("SELECT user_id, username, total_earnings FROM top_winners ORDER BY total_earnings DESC LIMIT 10")
                 rows = cursor.fetchall()
-            msg = "🏆 پر درآمد ها:\n\n"
+            msg = "🏆 پر درآمدهای گردونه شانس:\n\n"
             for i, row in enumerate(rows, 1):
-                msg += f"{i}. @{row[1] or 'Unknown'} - درآمد: {row[2]} تومان\n"
+                msg += f"{i}. @{row[1] or 'Unknown'} - درآمد: {row[2]:,} تومان\n"
             if not rows:
-                msg = "هنوز برنده‌ای ثبت نشده است."
+                msg = "🏆 هنوز برنده‌ای ثبت نشده! تو اولین باش! 😎"
             await update.message.reply_text(msg, reply_markup=chat_menu())
 
         elif text == "👤 پروفایل":
@@ -581,9 +617,10 @@ async def handle_messages(update: Update, context: ContextTypes):
             balance, invites, total_earnings, _ = user_data
             await update.message.reply_text(
                 f"👤 پروفایل شما:\n\n"
-                f"💰 موجودی: {balance} تومان\n"
-                f"👥 دعوت موفق: {invites} نفر\n"
-                f"💸 درآمد کل: {total_earnings} تومان",
+                f"💰 موجودی: {balance:,} تومان\n"
+                f"👥 دعوت‌های موفق: {invites} نفر\n"
+                f"💸 درآمد کل: {total_earnings:,} تومان\n\n"
+                "با دعوت دوستان، چرخش‌های رایگان بیشتری بگیر!",
                 reply_markup=chat_menu()
             )
 
@@ -591,11 +628,12 @@ async def handle_messages(update: Update, context: ContextTypes):
             with get_db_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute("SELECT invite_code FROM users WHERE user_id = %s", (user_id,))
-                invite_code = cursor.fetchone()[0]
+                result = cursor.fetchone()
+                invite_code = result[0] if result else generate_invite_code(user_id)
             invite_link = f"https://t.me/charkhoon_bot?start={invite_code}"
             await update.message.reply_text(
-                f"📢 لینک دعوت شما:\n{invite_link}\n\n"
-                "با هر دعوت موفق، یک چرخش رایگان بگیر!",
+                f"📢 لینک دعوت اختصاصی شما:\n{invite_link}\n\n"
+                "دوستاتو دعوت کن و با هر دعوت موفق، یه چرخش رایگان بگیر! 🚀",
                 reply_markup=chat_menu()
             )
 
@@ -604,7 +642,7 @@ async def handle_messages(update: Update, context: ContextTypes):
             card_number = text.strip()
             if not card_number.isdigit() or len(card_number) != 16:
                 await update.message.reply_text(
-                    "❌ شماره کارت نامعتبر است. لطفاً یک شماره کارت 16 رقمی معتبر وارد کنید.",
+                    "❌ شماره کارت نامعتبر است. لطفاً یک شماره کارت ۱۶ رقمی معتبر وارد کنید.",
                     reply_markup=chat_menu()
                 )
                 return
@@ -650,6 +688,7 @@ async def on_startup():
         await application.bot.delete_webhook()
         await application.bot.set_webhook(WEBHOOK_URL)
         await set_menu_commands(application)
+        init_db()  # مقداردهی دیتابیس هنگام استارتاپ
         await application.initialize()
         await application.start()
         logger.info("ربات با موفقیت شروع شد و وب‌هوک تنظیم شد")
