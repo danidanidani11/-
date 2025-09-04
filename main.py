@@ -15,69 +15,244 @@ import logging
 from telegram.error import TelegramError
 from tenacity import retry, stop_after_attempt, wait_fixed
 from dotenv import load_dotenv
+from datetime import datetime  # اضافه کردن برای مدیریت زمان
 
-# Load environment variables
-load_dotenv()
-
-# Setup logging
+# تنظیم لاگ‌ها برای دیباگ بهتر
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
+    level=logging.DEBUG
 )
 logger = logging.getLogger(__name__)
 
-# Environment variables
+# بارگذاری متغیرهای محیطی
+load_dotenv()
+
+# متغیرهای محیطی
 TOKEN = os.getenv("BOT_TOKEN", "8078210260:AAEX-vz_apP68a6WhzaGhuAKK7amC1qUiEY")
 ADMIN_ID = int(os.getenv("ADMIN_ID", 5542927340))
-YOUR_ID = int(os.getenv("YOUR_ID", 123456789))  # Replace with your ID
+YOUR_ID = int(os.getenv("YOUR_ID", 123456789))
 CHANNEL_ID = os.getenv("CHANNEL_ID", "@charkhoun")
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://charkhon_user:grMZtPEdreHgfbZrmSnrueTjgpvTzdk2@dpg-d2sislggjchc73aeb7og-a/charkhon")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://0kik4x8alj.onrender.com")
 STRICT_MEMBERSHIP = os.getenv("STRICT_MEMBERSHIP", "true").lower() == "true"
 
-SPIN_COST = 0  # No cost for spins, handled by invitations or free spins
-INVITE_REWARD = 1  # One spin per successful invite
-MIN_WITHDRAWAL = 2000000  # Minimum balance for withdrawal (2M Toman)
+SPIN_COST = 0
+INVITE_REWARD = 1
+MIN_WITHDRAWAL = 2000000
 
 app = FastAPI()
 
-# Database connection management
+# مدیریت اتصال به دیتابیس
 @contextmanager
 def get_db_connection():
-    conn = psycopg2.connect(DATABASE_URL)
     try:
+        conn = psycopg2.connect(DATABASE_URL)
         yield conn
-    finally:
         conn.close()
+    except Exception as e:
+        logger.error(f"خطای اتصال به دیتابیس: {str(e)}")
+        raise
 
 def init_db():
-    with get_db_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS users (
-                user_id BIGINT PRIMARY KEY,
-                balance INTEGER DEFAULT 0,
-                invites INTEGER DEFAULT 0,
-                spins INTEGER DEFAULT 2,  -- Two free spins initially
-                total_earnings INTEGER DEFAULT 0,
-                card_number TEXT,
-                last_action TIMESTAMP
-            )
-        ''')
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS top_winners (
-                user_id BIGINT PRIMARY KEY,
-                username TEXT,
-                total_earnings INTEGER,
-                last_win TIMESTAMP
-            )
-        ''')
-        conn.commit()
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS users (
+                    user_id BIGINT PRIMARY KEY,
+                    balance INTEGER DEFAULT 0,
+                    invites INTEGER DEFAULT 0,
+                    spins INTEGER DEFAULT 2,
+                    total_earnings INTEGER DEFAULT 0,
+                    card_number TEXT,
+                    last_action TIMESTAMP,
+                    invite_code TEXT UNIQUE
+                )
+            ''')
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS top_winners (
+                    user_id BIGINT PRIMARY KEY,
+                    username TEXT,
+                    total_earnings INTEGER,
+                    last_win TIMESTAMP
+                )
+            ''')
+            conn.commit()
+            logger.info("دیتابیس با موفقیت مقداردهی شد")
+    except Exception as e:
+        logger.error(f"خطا در مقداردهی دیتابیس: {str(e)}")
+        raise
 
-# Initialize database
-init_db()
+# --------------------------- توابع کمکی ---------------------------
 
-# --------------------------- Keyboards ---------------------------
+def generate_invite_code(user_id: int) -> str:
+    return hashlib.md5(f"{user_id}{time.time()}".encode()).hexdigest()[:8]
+
+def get_or_create_user(user_id: int) -> None:
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT user_id FROM users WHERE user_id = %s", (user_id,))
+            if not cursor.fetchone():
+                invite_code = generate_invite_code(user_id)
+                cursor.execute(
+                    "INSERT INTO users (user_id, spins, last_action, invite_code) VALUES (%s, %s, %s, %s)",
+                    (user_id, 2, datetime.now(), invite_code)
+                )
+                conn.commit()
+                logger.info(f"کاربر جدید ایجاد شد: {user_id}")
+    except Exception as e:
+        logger.error(f"خطا در get_or_create_user برای کاربر {user_id}: {str(e)}")
+        raise
+
+def update_balance(user_id: int, amount: int) -> None:
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE users SET balance = balance + %s, total_earnings = total_earnings + %s, last_action = %s WHERE user_id = %s",
+                (amount, amount if amount > 0 else 0, datetime.now(), user_id)
+            )
+            conn.commit()
+            logger.info(f"موجودی کاربر {user_id} آپدیت شد: {amount}")
+    except Exception as e:
+        logger.error(f"خطا در update_balance برای کاربر {user_id}: {str(e)}")
+        raise
+
+def update_spins(user_id: int, spins: int) -> None:
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE users SET spins = spins + %s, last_action = %s WHERE user_id = %s",
+                (spins, datetime.now(), user_id)
+            )
+            conn.commit()
+            logger.info(f"تعداد چرخش‌های کاربر {user_id} آپدیت شد: {spins}")
+    except Exception as e:
+        logger.error(f"خطا در update_spins برای کاربر {user_id}: {str(e)}")
+        raise
+
+def get_balance_and_spins(user_id: int) -> tuple:
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT balance, spins FROM users WHERE user_id = %s", (user_id,))
+            result = cursor.fetchone()
+            return result if result else (0, 2)
+    except Exception as e:
+        logger.error(f"خطا در get_balance_and_spins برای کاربر {user_id}: {str(e)}")
+        raise
+
+def get_user_data(user_id: int) -> tuple:
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT balance, invites, total_earnings, card_number FROM users WHERE user_id = %s", (user_id,))
+            return cursor.fetchone()
+    except Exception as e:
+        logger.error(f"خطا در get_user_data برای کاربر {user_id}: {str(e)}")
+        raise
+
+def save_card_number(user_id: int, card_number: str) -> None:
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE users SET card_number = %s, last_action = %s WHERE user_id = %s",
+                (card_number, datetime.now(), user_id)
+            )
+            conn.commit()
+            logger.info(f"شماره کارت برای کاربر {user_id} ذخیره شد")
+    except Exception as e:
+        logger.error(f"خطا در save_card_number برای کاربر {user_id}: {str(e)}")
+        raise
+
+@retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
+async def check_channel_membership(user_id: int, context: ContextTypes) -> bool:
+    try:
+        member = await context.bot.get_chat_member(CHANNEL_ID, user_id)
+        is_member = member.status in ['member', 'administrator', 'creator']
+        logger.info(f"بررسی عضویت برای کاربر {user_id}: {'عضو است' if is_member else 'عضو نیست'}")
+        return is_member
+    except TelegramError as e:
+        logger.error(f"خطای API تلگرام در بررسی عضویت برای کاربر {user_id}: {str(e)}")
+        if STRICT_MEMBERSHIP:
+            raise
+        return False
+    except Exception as e:
+        logger.error(f"خطای غیرمنتظره در بررسی عضویت برای کاربر {user_id}: {str(e)}")
+        if STRICT_MEMBERSHIP:
+            raise
+        return False
+
+# --------------------------- دستورات ادمین ---------------------------
+
+async def backup_db(update: Update, context: ContextTypes):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ شما اجازه انجام این عملیات را ندارید.", reply_markup=chat_menu())
+        return
+
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM users")
+            users = cursor.fetchall()
+            cursor.execute("SELECT * FROM top_winners")
+            top_winners = cursor.fetchall()
+
+        backup_data = {"users": users, "top_winners": top_winners}
+        backup_file = f"backup_{int(time.time())}.json"
+        with open(backup_file, "w") as f:
+            json.dump(backup_data, f, ensure_ascii=False)
+        
+        await update.message.reply_text(f"✅ بکاپ دیتابیس با موفقیت ایجاد شد: {backup_file}", reply_markup=chat_menu())
+    except Exception as e:
+        logger.error(f"خطا در backup_db: {str(e)}")
+        await update.message.reply_text(f"❌ خطا در ایجاد بکاپ: {str(e)}", reply_markup=chat_menu())
+
+async def clear_db(update: Update, context: ContextTypes):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ شما اجازه انجام این عملیات را ندارید.", reply_markup=chat_menu())
+        return
+
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM users")
+            cursor.execute("DELETE FROM top_winners")
+            conn.commit()
+        await update.message.reply_text("✅ دیتابیس با موفقیت پاک شد.", reply_markup=chat_menu())
+    except Exception as e:
+        logger.error(f"خطا در clear_db: {str(e)}")
+        await update.message.reply_text(f"❌ خطا در پاک کردن دیتابیس: {str(e)}", reply_markup=chat_menu())
+
+async def stats(update: Update, context: ContextTypes):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ شما اجازه انجام این عملیات را ندارید.", reply_markup=chat_menu())
+        return
+
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM users")
+            total_users = cursor.fetchone()[0]
+            cursor.execute("SELECT SUM(invites) FROM users")
+            total_invites = cursor.fetchone()[0] or 0
+        await update.message.reply_text(
+            f"📊 آمار ربات:\n\n"
+            f"👥 تعداد کل کاربران: {total_users}\n"
+            f"📢 تعداد کل دعوت‌ها: {total_invites}",
+            reply_markup=chat_menu()
+        )
+    except Exception as e:
+        logger.error(f"خطا در stats: {str(e)}")
+        await update.message.reply_text(f"❌ خطا در دریافت آمار: {str(e)}", reply_markup=chat_menu())
+
+# --------------------------- کیبوردها ---------------------------
 
 def main_menu():
     keyboard = [
@@ -107,141 +282,20 @@ def withdrawal_menu():
     ]
     return InlineKeyboardMarkup(keyboard)
 
-# --------------------------- Helper Functions ---------------------------
-
-def generate_invite_code(user_id: int) -> str:
-    return hashlib.md5(f"{user_id}{time.time()}".encode()).hexdigest()[:8]
-
-def get_or_create_user(user_id: int) -> None:
-    with get_db_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM users WHERE user_id=%s", (user_id,))
-        if not cursor.fetchone():
-            invite_code = generate_invite_code(user_id)
-            cursor.execute(
-                "INSERT INTO users (user_id, spins, last_action) VALUES (%s, %s, %s)",
-                (user_id, 2, time.time())
-            )
-            conn.commit()
-
-def update_balance(user_id: int, amount: int) -> None:
-    with get_db_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(
-            "UPDATE users SET balance = balance + %s, total_earnings = total_earnings + %s, last_action = %s WHERE user_id = %s",
-            (amount, amount if amount > 0 else 0, time.time(), user_id)
-        )
-        conn.commit()
-
-def update_spins(user_id: int, spins: int) -> None:
-    with get_db_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(
-            "UPDATE users SET spins = spins + %s, last_action = %s WHERE user_id = %s",
-            (spins, time.time(), user_id)
-        )
-        conn.commit()
-
-def get_balance_and_spins(user_id: int) -> tuple:
-    with get_db_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT balance, spins FROM users WHERE user_id=%s", (user_id,))
-        result = cursor.fetchone()
-        return result if result else (0, 2)
-
-def get_user_data(user_id: int) -> tuple:
-    with get_db_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT balance, invites, total_earnings, card_number FROM users WHERE user_id=%s", (user_id,))
-        return cursor.fetchone()
-
-def save_card_number(user_id: int, card_number: str) -> None:
-    with get_db_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(
-            "UPDATE users SET card_number = %s, last_action = %s WHERE user_id = %s",
-            (card_number, time.time(), user_id)
-        )
-        conn.commit()
-
-@retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
-async def check_channel_membership(user_id: int, context: ContextTypes) -> bool:
-    try:
-        member = await context.bot.get_chat_member(CHANNEL_ID, user_id)
-        is_member = member.status in ['member', 'administrator', 'creator']
-        logger.info(f"Membership check for user {user_id}: {'Member' if is_member else 'Not a member'}")
-        return is_member
-    except TelegramError as e:
-        logger.error(f"Telegram API error checking membership for user {user_id}: {str(e)}")
-        if STRICT_MEMBERSHIP:
-            raise
-        return False
-    except Exception as e:
-        logger.error(f"Unexpected error checking membership for user {user_id}: {str(e)}")
-        if STRICT_MEMBERSHIP:
-            raise
-        return False
-
-# --------------------------- Admin Commands ---------------------------
-
-async def backup_db(update: Update, context: ContextTypes):
-    user_id = update.effective_user.id
-    if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ شما اجازه انجام این عملیات را ندارید.", reply_markup=chat_menu())
-        return
-
-    with get_db_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM users")
-        users = cursor.fetchall()
-        cursor.execute("SELECT * FROM top_winners")
-        top_winners = cursor.fetchall()
-
-    backup_data = {"users": users, "top_winners": top_winners}
-    with open(f"backup_{int(time.time())}.json", "w") as f:
-        json.dump(backup_data, f, ensure_ascii=False)
-    
-    await update.message.reply_text("✅ بکاپ دیتابیس با موفقیت ایجاد شد.", reply_markup=chat_menu())
-
-async def clear_db(update: Update, context: ContextTypes):
-    user_id = update.effective_user.id
-    if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ شما اجازه انجام این عملیات را ندارید.", reply_markup=chat_menu())
-        return
-
-    with get_db_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM users")
-        cursor.execute("DELETE FROM top_winners")
-        conn.commit()
-    
-    await update.message.reply_text("✅ دیتابیس با موفقیت پاک شد.", reply_markup=chat_menu())
-
-async def stats(update: Update, context: ContextTypes):
-    user_id = update.effective_user.id
-    if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ شما اجازه انجام این عملیات را ندارید.", reply_markup=chat_menu())
-        return
-
-    with get_db_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM users")
-        total_users = cursor.fetchone()[0]
-        cursor.execute("SELECT SUM(invites) FROM users")
-        total_invites = cursor.fetchone()[0] or 0
-    
-    await update.message.reply_text(
-        f"📊 آمار ربات:\n\n"
-        f"👥 تعداد کل کاربران: {total_users}\n"
-        f"📢 تعداد کل دعوت‌ها: {total_invites}",
-        reply_markup=chat_menu()
-    )
-
-# --------------------------- Handlers ---------------------------
+# --------------------------- هندلرها ---------------------------
 
 async def start(update: Update, context: ContextTypes):
     user = update.effective_user
-    get_or_create_user(user.id)
+    logger.debug(f"دستور /start توسط کاربر {user.id} اجرا شد")
+    try:
+        get_or_create_user(user.id)
+    except Exception as e:
+        logger.error(f"خطا در ایجاد/دریافت کاربر {user.id}: {str(e)}")
+        await update.message.reply_text(
+            "❌ خطایی رخ داد. لطفاً دوباره امتحان کنید یا با پشتیبانی تماس بگیرید.",
+            reply_markup=back_button()
+        )
+        return
 
     try:
         if not await check_channel_membership(user.id, context):
@@ -251,23 +305,27 @@ async def start(update: Update, context: ContextTypes):
             )
             return
     except Exception as e:
-        logger.error(f"Membership check error for user {user.id}: {str(e)}")
+        logger.error(f"خطای بررسی عضویت برای کاربر {user.id}: {str(e)}")
         await update.message.reply_text(
             "⚠️ خطایی در بررسی عضویت رخ داد. لطفاً دوباره امتحان کنید یا با پشتیبانی تماس بگیرید.",
             reply_markup=back_button()
         )
         return
 
-    if context.args:
-        ref_code = context.args[0]
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT user_id FROM users WHERE invite_code=%s", (ref_code,))
-            referrer = cursor.fetchone()
-            if referrer and referrer[0] != user.id:
-                update_spins(referrer[0], INVITE_REWARD)
-                cursor.execute("UPDATE users SET invites = invites + 1 WHERE user_id=%s", (referrer[0],))
-                conn.commit()
+    try:
+        if context.args:
+            ref_code = context.args[0]
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT user_id FROM users WHERE invite_code = %s", (ref_code,))
+                referrer = cursor.fetchone()
+                if referrer and referrer[0] != user.id:
+                    update_spins(referrer[0], INVITE_REWARD)
+                    cursor.execute("UPDATE users SET invites = invites + 1 WHERE user_id = %s", (referrer[0],))
+                    conn.commit()
+                    logger.info(f"کاربر {user.id} از طریق دعوت {ref_code} ثبت شد")
+    except Exception as e:
+        logger.error(f"خطا در پردازش کد دعوت برای کاربر {user.id}: {str(e)}")
 
     await update.message.reply_text(
         "🎉 خوش آمدی به گردونه شانس!\n\n"
@@ -277,6 +335,7 @@ async def start(update: Update, context: ContextTypes):
 
 async def menu(update: Update, context: ContextTypes):
     user_id = update.effective_user.id
+    logger.debug(f"دستور /menu توسط کاربر {user_id} اجرا شد")
     try:
         if not await check_channel_membership(user_id, context):
             await update.message.reply_text(
@@ -284,7 +343,7 @@ async def menu(update: Update, context: ContextTypes):
             )
             return
     except Exception as e:
-        logger.error(f"Membership check error in menu for user {user_id}: {str(e)}")
+        logger.error(f"خطای بررسی عضویت در منو برای کاربر {user_id}: {str(e)}")
         await update.message.reply_text(
             "⚠️ خطایی در بررسی عضویت رخ داد. لطفاً دوباره امتحان کنید یا با پشتیبانی تماس بگیرید.",
             reply_markup=back_button()
@@ -294,33 +353,46 @@ async def menu(update: Update, context: ContextTypes):
     await update.message.reply_text("منوی اصلی:", reply_markup=chat_menu())
 
 async def spin_wheel(user_id: int, context: ContextTypes) -> tuple:
-    amount = random.choices(
-        [random.randint(20000, 50000), random.randint(50001, 100000), random.randint(100001, 300000)],
-        weights=[70, 25, 5],
-        k=1
-    )[0]
-    
-    update_balance(user_id, amount)
-    update_spins(user_id, -1)
-    
-    with get_db_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(
-            "INSERT INTO top_winners (user_id, username, total_earnings, last_win) "
-            "VALUES (%s, %s, %s, %s) ON CONFLICT (user_id) DO UPDATE "
-            "SET total_earnings = top_winners.total_earnings + %s, last_win = %s",
-            (user_id, context.user_data.get('username', 'Unknown'), amount, time.time(), amount, time.time())
-        )
-        conn.commit()
-    
-    await context.bot.send_message(ADMIN_ID, f"🎡 کاربر {user_id} گردونه را چرخاند و برنده شد: {amount} تومان")
-    return amount, f"🎉 شما برنده {amount} تومان شدید!"
+    try:
+        amount = random.choices(
+            [random.randint(20000, 50000), random.randint(50001, 100000), random.randint(100001, 300000)],
+            weights=[70, 25, 5],
+            k=1
+        )[0]
+        
+        update_balance(user_id, amount)
+        update_spins(user_id, -1)
+        
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO top_winners (user_id, username, total_earnings, last_win) "
+                "VALUES (%s, %s, %s, %s) ON CONFLICT (user_id) DO UPDATE "
+                "SET total_earnings = top_winners.total_earnings + %s, last_win = %s",
+                (user_id, context.user_data.get('username', 'Unknown'), amount, datetime.now(), amount, datetime.now())
+            )
+            conn.commit()
+        
+        await context.bot.send_message(ADMIN_ID, f"🎡 کاربر {user_id} گردونه را چرخاند و برنده شد: {amount} تومان")
+        return amount, f"🎉 شما برنده {amount} تومان شدید!"
+    except Exception as e:
+        logger.error(f"خطا در spin_wheel برای کاربر {user_id}: {str(e)}")
+        raise
 
 async def callback_handler(update: Update, context: ContextTypes):
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
-    get_or_create_user(user_id)
+    logger.debug(f"Callback دریافت شد از کاربر {user_id}: {query.data}")
+    try:
+        get_or_create_user(user_id)
+    except Exception as e:
+        logger.error(f"خطا در ایجاد/دریافت کاربر {user_id} در callback: {str(e)}")
+        await query.edit_message_text(
+            f"❌ خطایی رخ داد: {str(e)}\nلطفاً دوباره امتحان کنید.",
+            reply_markup=back_button()
+        )
+        return
 
     try:
         if not await check_channel_membership(user_id, context):
@@ -331,7 +403,7 @@ async def callback_handler(update: Update, context: ContextTypes):
             )
             return
     except Exception as e:
-        logger.error(f"Membership check error in callback for user {user_id}: {str(e)}")
+        logger.error(f"خطای بررسی عضویت در callback برای کاربر {user_id}: {str(e)}")
         await query.edit_message_text(
             "⚠️ خطایی در بررسی عضویت رخ داد. لطفاً دوباره امتحان کنید یا با پشتیبانی تماس بگیرید.",
             reply_markup=back_button()
@@ -423,7 +495,7 @@ async def callback_handler(update: Update, context: ContextTypes):
         elif query.data == "invite":
             with get_db_connection() as conn:
                 cursor = conn.cursor()
-                cursor.execute("SELECT invite_code FROM users WHERE user_id=%s", (user_id,))
+                cursor.execute("SELECT invite_code FROM users WHERE user_id = %s", (user_id,))
                 invite_code = cursor.fetchone()[0]
             invite_link = f"https://t.me/charkhoon_bot?start={invite_code}"
             await query.edit_message_text(
@@ -433,7 +505,7 @@ async def callback_handler(update: Update, context: ContextTypes):
             )
 
     except Exception as e:
-        logger.error(f"Callback handler error for user {user_id}: {str(e)}")
+        logger.error(f"خطای هندلر callback برای کاربر {user_id}: {str(e)}")
         await query.edit_message_text(
             f"❌ خطایی رخ داد: {str(e)}\nلطفاً دوباره امتحان کنید.",
             reply_markup=back_button()
@@ -442,6 +514,7 @@ async def callback_handler(update: Update, context: ContextTypes):
 async def handle_messages(update: Update, context: ContextTypes):
     user_id = update.effective_user.id
     text = update.message.text.strip() if update.message.text else ""
+    logger.debug(f"پیام دریافت شد از کاربر {user_id}: {text}")
 
     try:
         if not await check_channel_membership(user_id, context):
@@ -452,7 +525,7 @@ async def handle_messages(update: Update, context: ContextTypes):
             )
             return
     except Exception as e:
-        logger.error(f"Membership check error in message handler for user {user_id}: {str(e)}")
+        logger.error(f"خطای بررسی عضویت در هندلر پیام برای کاربر {user_id}: {str(e)}")
         await update.message.reply_text(
             "⚠️ خطایی در بررسی عضویت رخ داد. لطفاً دوباره امتحان کنید یا با پشتیبانی تماس بگیرید.",
             reply_markup=chat_menu()
@@ -517,7 +590,7 @@ async def handle_messages(update: Update, context: ContextTypes):
         elif text == "📢 دعوت دوستان":
             with get_db_connection() as conn:
                 cursor = conn.cursor()
-                cursor.execute("SELECT invite_code FROM users WHERE user_id=%s", (user_id,))
+                cursor.execute("SELECT invite_code FROM users WHERE user_id = %s", (user_id,))
                 invite_code = cursor.fetchone()[0]
             invite_link = f"https://t.me/charkhoon_bot?start={invite_code}"
             await update.message.reply_text(
@@ -542,17 +615,16 @@ async def handle_messages(update: Update, context: ContextTypes):
             )
 
     except Exception as e:
-        logger.error(f"Message handler error for user {user_id}: {str(e)}")
+        logger.error(f"خطای هندلر پیام برای کاربر {user_id}: {str(e)}")
         await update.message.reply_text(
             f"❌ خطایی رخ داد: {str(e)}\nلطفاً دوباره امتحان کنید.",
             reply_markup=chat_menu()
         )
 
-# --------------------------- Register Handlers and Bot Menu ---------------------------
+# --------------------------- ثبت هندلرها و تنظیم منوی ربات ---------------------------
 
 application = ApplicationBuilder().token(TOKEN).build()
 
-# Set bot menu commands
 async def set_menu_commands(application):
     commands = [
         BotCommand(command="/start", description="شروع ربات"),
@@ -570,19 +642,19 @@ application.add_handler(CommandHandler("stats", stats))
 application.add_handler(CallbackQueryHandler(callback_handler))
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_messages))
 
-# --------------------------- FastAPI Webhook ---------------------------
+# --------------------------- وب‌هوک FastAPI ---------------------------
 
 @app.on_event("startup")
 async def on_startup():
     try:
         await application.bot.delete_webhook()
         await application.bot.set_webhook(WEBHOOK_URL)
-        await set_menu_commands(application)  # Set bot menu
+        await set_menu_commands(application)
         await application.initialize()
         await application.start()
-        logger.info("Bot started successfully and webhook set")
+        logger.info("ربات با موفقیت شروع شد و وب‌هوک تنظیم شد")
     except Exception as e:
-        logger.error(f"Startup error: {str(e)}")
+        logger.error(f"خطای استارتاپ: {str(e)}")
         raise
 
 @app.on_event("shutdown")
@@ -590,9 +662,9 @@ async def on_shutdown():
     try:
         await application.stop()
         await application.shutdown()
-        logger.info("Bot stopped successfully")
+        logger.info("ربات با موفقیت متوقف شد")
     except Exception as e:
-        logger.error(f"Shutdown error: {str(e)}")
+        logger.error(f"خطای خاموش کردن: {str(e)}")
 
 @app.post("/")
 async def webhook(req: Request):
@@ -602,5 +674,5 @@ async def webhook(req: Request):
         await application.process_update(update)
         return {"ok": True}
     except Exception as e:
-        logger.error(f"Webhook error: {str(e)}")
+        logger.error(f"خطای وب‌هوک: {str(e)}")
         return {"ok": False}
