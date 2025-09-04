@@ -690,18 +690,21 @@ async def callback_handler(update: Update, context: ContextTypes):
             logger.debug(f"Processing confirm_payment callback: {query.data}")
             try:
                 parts = query.data.split("_")
-                if len(parts) != 3:
+                if len(parts) != 4:  # باید 4 بخش داشته باشد: confirm_payment + user_id + amount
                     logger.error(f"فرمت callback_data نامعتبر: {query.data}")
                     await query.message.reply_text("❌ خطا در تأیید پرداخت: فرمت داده نامعتبر.", reply_markup=chat_menu())
                     return
-                target_user_id = int(parts[1])
-                amount = int(parts[2])
+                
+                target_user_id = int(parts[2])
+                amount = int(parts[3])
                 user_data = get_user_data(target_user_id)
                 card_number = user_data[3]
+                
                 if not card_number:
                     logger.error(f"شماره کارت برای کاربر {target_user_id} ثبت نشده است")
                     await query.message.reply_text("❌ خطا: شماره کارت ثبت نشده است.", reply_markup=chat_menu())
                     return
+                
                 payment_id = record_payment(target_user_id, amount, card_number)
                 await context.bot.send_message(
                     target_user_id,
@@ -709,6 +712,7 @@ async def callback_handler(update: Update, context: ContextTypes):
                 )
                 await query.message.edit_text("✅ تأیید شد", reply_markup=None)
                 logger.info(f"پرداخت برای کاربر {target_user_id} با مقدار {amount} تأیید شد")
+                
             except ValueError as e:
                 logger.error(f"خطا در پردازش callback_data: {query.data}, خطا: {str(e)}")
                 await query.message.reply_text("❌ خطا در تأیید پرداخت: داده نامعتبر است.", reply_markup=chat_menu())
