@@ -90,7 +90,6 @@ def init_db():
                     confirmed_at TIMESTAMP
                 )
             ''')
-            # جدول جدید برای ثبت دعوت‌ها
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS invitations (
                     inviter_id BIGINT,
@@ -699,23 +698,27 @@ async def callback_handler(update: Update, context: ContextTypes):
         elif query.data.startswith("confirm_payment_"):
             # فقط ادمین می‌تونه تأیید کنه (چک در ابتدای تابع)
             try:
+                logger.debug(f"Processing confirm_payment callback: {query.data}")
                 parts = query.data.split("_")
-                logger.debug(f"callback_data parts: {parts}")  # لاگ برای دیباگ
+                logger.debug(f"callback_data parts: {parts}")
                 if len(parts) != 3:
-                    raise ValueError(f"فرمت callback_data نامعتبر است: {query.data}")
-                prefix, target_user_id, amount = parts
-                if prefix != "confirm_payment":
-                    raise ValueError(f"پیشوند callback_data نامعتبر است: {prefix}")
-                try:
-                    target_user_id = int(target_user_id)
-                    amount = int(amount)
-                except ValueError:
-                    raise ValueError(f"مقادیر user_id یا amount نامعتبر است: {query.data}")
-                # ثبت پرداخت در دیتابیس
+                    logger.error(f"Invalid callback_data format: {query.data}")
+                    await query.message.reply_text(
+                        "❌ خطا در تأیید پرداخت: فرمت داده نامعتبر است.",
+                        reply_markup=chat_menu()
+                    )
+                    return
+                target_user_id = int(parts[1])
+                amount = int(parts[2])
                 user_data = get_user_data(target_user_id)
                 card_number = user_data[3]
                 if not card_number:
-                    raise ValueError(f"شماره کارت برای کاربر {target_user_id} ثبت نشده است")
+                    logger.error(f"No card number for user {target_user_id}")
+                    await query.message.reply_text(
+                        "❌ خطا در تأیید پرداخت: شماره کارت ثبت نشده است.",
+                        reply_markup=chat_menu()
+                    )
+                    return
                 payment_id = record_payment(target_user_id, amount, card_number)
                 # اطلاع‌رسانی به کاربر
                 await context.bot.send_message(
