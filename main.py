@@ -3,7 +3,7 @@ import psycopg2
 import random
 import json
 from fastapi import FastAPI, Request
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, ReplyKeyboardMarkup, KeyboardButton, BotCommand
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, ReplyKeyboardMarkup, KeyboardButton, BotCommand, BotCommandScopeChat, BotCommandScopeDefault
 from telegram.ext import (
     ApplicationBuilder, ContextTypes,
     CommandHandler, CallbackQueryHandler, MessageHandler, filters
@@ -263,41 +263,6 @@ async def stats(update: Update, context: ContextTypes):
         logger.error(f"خطا در stats: {str(e)}")
         await update.message.reply_text(f"❌ خطا در دریافت آمار: {str(e)}", reply_markup=chat_menu())
 
-async def confirm_payment(update: Update, context: ContextTypes):
-    user_id = update.effective_user.id
-    if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ شما اجازه انجام این عملیات را ندارید.", reply_markup=chat_menu())
-        return
-
-    if not context.args:
-        await update.message.reply_text(
-            "❌ لطفاً آیدی کاربر را وارد کنید. مثال: /confirm_payment 123456789",
-            reply_markup=chat_menu()
-        )
-        return
-
-    try:
-        target_user_id = int(context.args[0])
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT user_id FROM users WHERE user_id = %s", (target_user_id,))
-            if not cursor.fetchone():
-                await update.message.reply_text("❌ کاربر یافت نشد!", reply_markup=chat_menu())
-                return
-
-        await context.bot.send_message(
-            target_user_id,
-            "🎉 جایزه شما توسط ادمین پرداخت شد! از چرخوندن گردونه لذت ببرید! 🚀"
-        )
-        await update.message.reply_text(
-            f"✅ پیام تأیید پرداخت به کاربر {target_user_id} ارسال شد.",
-            reply_markup=chat_menu()
-        )
-        logger.info(f"تأیید پرداخت برای کاربر {target_user_id} توسط ادمین ارسال شد")
-    except Exception as e:
-        logger.error(f"خطا در confirm_payment: {str(e)}")
-        await update.message.reply_text(f"❌ خطا: {str(e)}", reply_markup=chat_menu())
-
 # --------------------------- کیبوردها ---------------------------
 
 def main_menu():
@@ -370,27 +335,27 @@ async def start(update: Update, context: ContextTypes):
                             "🎉 یه نفر با لینک دعوتت به گردونه شانس پیوست! یه چرخش رایگان برات اضافه شد! 🚀"
                         )
                         await update.message.reply_text(
-                            "🎉 تبریک! از طریق دعوت یه دوست وارد شدی! حالا توی کانال ما هستی و می‌تونی گردونه رو بچرخونی!",
+                            "🎉 تبریک! از طریق دعوت یه دوست وارد شدی! حالا توی بات ما هستی و می‌تونی گردونه رو بچرخونی!",
                             reply_markup=chat_menu()
                         )
                     else:
                         await update.message.reply_text(
                             "🎉 خوش آمدی به گردونه شانس!\n\n"
-                            "دو چرخش رایگان داری! با هر دعوت موفق، یه چرخش دیگه بگیر!\n"
+                            "دو فرصت گردونه داری! با هر دعوت موفق، یه فرصت دیگه بگیر!\n"
                             "برای شروع، یکی از گزینه‌های زیر رو انتخاب کن:",
                             reply_markup=chat_menu()
                         )
             except ValueError:
                 await update.message.reply_text(
                     "🎉 خوش آمدی به گردونه شانس!\n\n"
-                    "دو چرخش رایگان داری! با هر دعوت موفق، یه چرخش دیگه بگیر!\n"
+                    "دو فرصت گردونه داری! با هر دعوت موفق، یه فرصت دیگه بگیر!\n"
                     "برای شروع، یکی از گزینه‌های زیر رو انتخاب کن:",
                     reply_markup=chat_menu()
                 )
         else:
             await update.message.reply_text(
                 "🎉 خوش آمدی به گردونه شانس!\n\n"
-                "دو چرخش رایگان داری! با هر دعوت موفق، یه چرخش دیگه بگیر!\n"
+                "دو فرصت گردونه داری! با هر دعوت موفق، یه فرصت دیگه بگیر!\n"
                 "برای شروع، یکی از گزینه‌های زیر رو انتخاب کن:",
                 reply_markup=chat_menu()
             )
@@ -455,7 +420,7 @@ async def spin_wheel(user_id: int, context: ContextTypes) -> tuple:
             )
             conn.commit()
         
-        return amount, f"🎉 تبریک! شما برنده {amount:,} تومان شدید! 🎊\nدوباره بچرخون یا دوستاتو دعوت کن تا چرخش بیشتر بگیری!"
+        return amount, f"🎉 تبریک! شما برنده {amount:,} تومان شدید! 🎊\nدوباره بچرخون یا دوستاتو دعوت کن تا فرصت گردونه بیشتر بگیری!"
     except Exception as e:
         logger.error(f"خطا در spin_wheel برای کاربر {user_id}: {str(e)}")
         raise
@@ -501,7 +466,7 @@ async def callback_handler(update: Update, context: ContextTypes):
             if balance < MIN_WITHDRAWAL:
                 await query.message.reply_text(
                     f"💰 موجودی شما: {balance:,} تومان\n"
-                    f"🎡 تعداد چرخش‌های رایگان: {spins}\n\n"
+                    f"🎡 تعداد فرصت گردونه: {spins}\n\n"
                     f"❌ موجودی کافی نداری! حداقل {MIN_WITHDRAWAL:,} تومان نیازه.\n"
                     "با دعوت دوستان و چرخوندن گردونه، موجودیتو افزایش بده!",
                     reply_markup=chat_menu()
@@ -509,7 +474,7 @@ async def callback_handler(update: Update, context: ContextTypes):
             else:
                 await query.message.reply_text(
                     f"💰 موجودی شما: {balance:,} تومان\n"
-                    f"🎡 تعداد چرخش‌های رایگان: {spins}\n\n"
+                    f"🎡 تعداد فرصت گردونه: {spins}\n\n"
                     "📝 برای برداشت، می‌تونی درخواست بدی!\n"
                     "با دعوت دوستان و چرخوندن گردونه، موجودیتو افزایش بده!",
                     reply_markup=withdrawal_menu()
@@ -543,7 +508,7 @@ async def callback_handler(update: Update, context: ContextTypes):
             balance, spins = get_balance_and_spins(user_id)
             if spins <= 0:
                 await query.message.reply_text(
-                    "❌ شما چرخش رایگان ندارید! 😕\nدوستاتو دعوت کن تا چرخش جدید بگیری!",
+                    "❌ شما فرصت گردونه ندارید! 😕\nدوستاتو دعوت کن تا فرصت جدید بگیری!",
                     reply_markup=chat_menu()
                 )
                 return
@@ -566,9 +531,11 @@ async def callback_handler(update: Update, context: ContextTypes):
         elif query.data == "profile":
             user_data = get_user_data(user_id)
             balance, invites, total_earnings, _ = user_data
+            _, spins = get_balance_and_spins(user_id)
             await query.message.reply_text(
                 f"👤 پروفایل شما:\n\n"
                 f"💰 موجودی: {balance:,} تومان\n"
+                f"🎡 تعداد فرصت گردونه: {spins}\n"
                 f"👥 دعوت‌های موفق: {invites} نفر\n"
                 f"💸 درآمد کل: {total_earnings:,} تومان\n\n"
                 "با دعوت دوستان و چرخوندن گردونه، موجودیتو افزایش بده!",
@@ -579,7 +546,7 @@ async def callback_handler(update: Update, context: ContextTypes):
             invite_link = f"https://t.me/Charkhoun_bot?start={user_id}"
             await query.message.reply_text(
                 f"📢 لینک دعوت اختصاصی شما:\n{invite_link}\n\n"
-                "دوستاتو دعوت کن و با هر دعوت موفق، یه چرخش رایگان بگیر! 🚀",
+                "دوستاتو دعوت کن و با هر دعوت موفق، یه فرصت گردونه بگیر! 🚀",
                 reply_markup=chat_menu()
             )
 
@@ -616,7 +583,7 @@ async def handle_messages(update: Update, context: ContextTypes):
             balance, spins = get_balance_and_spins(user_id)
             if spins <= 0:
                 await update.message.reply_text(
-                    "❌ شما چرخش رایگان ندارید! 😕\nدوستاتو دعوت کن تا چرخش جدید بگیری!",
+                    "❌ شما فرصت گردونه ندارید! 😕\nدوستاتو دعوت کن تا فرصت جدید بگیری!",
                     reply_markup=chat_menu()
                 )
                 return
@@ -629,7 +596,7 @@ async def handle_messages(update: Update, context: ContextTypes):
             if balance < MIN_WITHDRAWAL:
                 await update.message.reply_text(
                     f"💰 موجودی شما: {balance:,} تومان\n"
-                    f"🎡 تعداد چرخش‌های رایگان: {spins}\n\n"
+                    f"🎡 تعداد فرصت گردونه: {spins}\n\n"
                     f"❌ موجودی کافی نداری! حداقل {MIN_WITHDRAWAL:,} تومان نیازه.\n"
                     "با دعوت دوستان و چرخوندن گردونه، موجودیتو افزایش بده!",
                     reply_markup=chat_menu()
@@ -637,7 +604,7 @@ async def handle_messages(update: Update, context: ContextTypes):
             else:
                 await update.message.reply_text(
                     f"💰 موجودی شما: {balance:,} تومان\n"
-                    f"🎡 تعداد چرخش‌های رایگان: {spins}\n\n"
+                    f"🎡 تعداد فرصت گردونه: {spins}\n\n"
                     "📝 برای برداشت، می‌تونی درخواست بدی!\n"
                     "با دعوت دوستان و چرخوندن گردونه، موجودیتو افزایش بده!",
                     reply_markup=withdrawal_menu()
@@ -658,9 +625,11 @@ async def handle_messages(update: Update, context: ContextTypes):
         elif text == "👤 پروفایل":
             user_data = get_user_data(user_id)
             balance, invites, total_earnings, _ = user_data
+            _, spins = get_balance_and_spins(user_id)
             await update.message.reply_text(
                 f"👤 پروفایل شما:\n\n"
                 f"💰 موجودی: {balance:,} تومان\n"
+                f"🎡 تعداد فرصت گردونه: {spins}\n"
                 f"👥 دعوت‌های موفق: {invites} نفر\n"
                 f"💸 درآمد کل: {total_earnings:,} تومان\n\n"
                 "با دعوت دوستان و چرخوندن گردونه، موجودیتو افزایش بده!",
@@ -671,7 +640,7 @@ async def handle_messages(update: Update, context: ContextTypes):
             invite_link = f"https://t.me/Charkhoun_bot?start={user_id}"
             await update.message.reply_text(
                 f"📢 لینک دعوت اختصاصی شما:\n{invite_link}\n\n"
-                "دوستاتو دعوت کن و با هر دعوت موفق، یه چرخش رایگان بگیر! 🚀",
+                "دوستاتو دعوت کن و با هر دعوت موفق، یه فرصت گردونه بگیر! 🚀",
                 reply_markup=chat_menu()
             )
 
@@ -709,15 +678,17 @@ async def handle_messages(update: Update, context: ContextTypes):
                     reply_markup=chat_menu()
                 )
                 return
+            user_data = get_user_data(user_id)
+            invites = user_data[1]
             card_number = context.user_data.get("card_number")
             update_balance(user_id, -amount)
             await context.bot.send_message(
                 ADMIN_ID,
                 f"💸 درخواست برداشت جدید:\n"
-                f"👤 کاربر: {user_id}\n"
-                f"💰 مقدار: {amount:,} تومان\n"
-                f"💳 شماره کارت: {card_number}\n"
-                f"لطفاً جایزه را پرداخت کنید و سپس از /confirm_payment {user_id} استفاده کنید."
+                f"👤 آیدی کاربر: {user_id}\n"
+                f"💰 مقدار برداشت: {amount:,} تومان\n"
+                f"👥 تعداد دعوت‌های موفق: {invites} نفر\n"
+                f"💳 شماره کارت: {card_number}"
             )
             await update.message.reply_text(
                 f"✅ درخواست برداشت {amount:,} تومان ثبت شد. ادمین جایزه شما رو پرداخت می‌کنه! لطفاً منتظر تأیید باشید.",
@@ -737,21 +708,27 @@ async def handle_messages(update: Update, context: ContextTypes):
 application = ApplicationBuilder().token(TOKEN).build()
 
 async def set_menu_commands(application):
-    commands = [
+    # دستورات برای کاربران عادی
+    user_commands = [
+        BotCommand(command="/start", description="شروع ربات")
+    ]
+    # دستورات برای ادمین
+    admin_commands = [
         BotCommand(command="/start", description="شروع ربات"),
         BotCommand(command="/backup_db", description="بکاپ دیتابیس (ادمین)"),
         BotCommand(command="/clear_db", description="پاک کردن دیتابیس (ادمین)"),
-        BotCommand(command="/stats", description="آمار ربات (ادمین)"),
-        BotCommand(command="/confirm_payment", description="تأیید پرداخت جایزه (ادمین)")
+        BotCommand(command="/stats", description="آمار ربات (ادمین)")
     ]
-    await application.bot.set_my_commands(commands)
+    # تنظیم دستورات برای همه کاربران
+    await application.bot.set_my_commands(user_commands, scope=BotCommandScopeDefault())
+    # تنظیم دستورات برای ادمین
+    await application.bot.set_my_commands(admin_commands, scope=BotCommandScopeChat(chat_id=ADMIN_ID))
 
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("menu", menu))
 application.add_handler(CommandHandler("backup_db", backup_db))
 application.add_handler(CommandHandler("clear_db", clear_db))
 application.add_handler(CommandHandler("stats", stats))
-application.add_handler(CommandHandler("confirm_payment", confirm_payment))
 application.add_handler(CallbackQueryHandler(callback_handler))
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_messages))
 
