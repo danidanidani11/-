@@ -263,6 +263,41 @@ async def stats(update: Update, context: ContextTypes):
         logger.error(f"خطا در stats: {str(e)}")
         await update.message.reply_text(f"❌ خطا در دریافت آمار: {str(e)}", reply_markup=chat_menu())
 
+async def confirm_payment(update: Update, context: ContextTypes):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ شما اجازه انجام این عملیات را ندارید.", reply_markup=chat_menu())
+        return
+
+    if not context.args:
+        await update.message.reply_text(
+            "❌ لطفاً آیدی کاربر را وارد کنید. مثال: /confirm_payment 123456789",
+            reply_markup=chat_menu()
+        )
+        return
+
+    try:
+        target_user_id = int(context.args[0])
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT user_id FROM users WHERE user_id = %s", (target_user_id,))
+            if not cursor.fetchone():
+                await update.message.reply_text("❌ کاربر یافت نشد!", reply_markup=chat_menu())
+                return
+
+        await context.bot.send_message(
+            target_user_id,
+            "🎉 جایزه شما توسط ادمین پرداخت شد! از چرخوندن گردونه لذت ببرید! 🚀"
+        )
+        await update.message.reply_text(
+            f"✅ پیام تأیید پرداخت به کاربر {target_user_id} ارسال شد.",
+            reply_markup=chat_menu()
+        )
+        logger.info(f"تأیید پرداخت برای کاربر {target_user_id} توسط ادمین ارسال شد")
+    except Exception as e:
+        logger.error(f"خطا در confirm_payment: {str(e)}")
+        await update.message.reply_text(f"❌ خطا: {str(e)}", reply_markup=chat_menu())
+
 # --------------------------- کیبوردها ---------------------------
 
 def main_menu():
@@ -315,41 +350,43 @@ async def start(update: Update, context: ContextTypes):
                 "اگر مشکلی پیش آمد، با پشتیبانی (@daniaam) تماس بگیرید."
             )
             return
-    except Exception as e:
-        logger.error(f"خطای بررسی عضویت برای کاربر {user.id}: {str(e)}")
-        await update.message.reply_text(
-            "⚠️ خطایی در بررسی عضویت رخ داد. لطفاً دوباره امتحان کنید یا با پشتیبانی (@daniaam) تماس بگیرید.",
-            reply_markup=chat_menu()
-        )
-        return
 
-    try:
+        # پردازش دعوت بعد از تأیید عضویت
         if context.args:
             ref_id = context.args[0]
-            with get_db_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT user_id FROM users WHERE user_id = %s", (int(ref_id),))
-                referrer = cursor.fetchone()
-                if referrer and referrer[0] != user.id:
-                    update_spins(referrer[0], INVITE_REWARD)
-                    cursor.execute("UPDATE users SET invites = invites + 1 WHERE user_id = %s", (referrer[0],))
-                    conn.commit()
-                    logger.info(f"کاربر {user.id} از طریق دعوت {ref_id} ثبت شد")
-                    await context.bot.send_message(
-                        referrer[0],
-                        "🎉 یه دوست جدید با لینک دعوتت به گردونه شانس پیوست! یه چرخش رایگان برات اضافه شد! 🚀"
-                    )
-                    await update.message.reply_text(
-                        "🎉 تبریک! از طریق دعوت یه دوست وارد شدی! حالا توی کانال ما هستی و می‌تونی گردونه رو بچرخونی!",
-                        reply_markup=chat_menu()
-                    )
-                else:
-                    await update.message.reply_text(
-                        "🎉 خوش آمدی به گردونه شانس!\n\n"
-                        "دو چرخش رایگان داری! با هر دعوت موفق، یه چرخش دیگه بگیر!\n"
-                        "برای شروع، یکی از گزینه‌های زیر رو انتخاب کن:",
-                        reply_markup=chat_menu()
-                    )
+            try:
+                ref_id = int(ref_id)
+                with get_db_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT user_id FROM users WHERE user_id = %s", (ref_id,))
+                    referrer = cursor.fetchone()
+                    if referrer and referrer[0] != user.id:
+                        update_spins(ref_id, INVITE_REWARD)
+                        cursor.execute("UPDATE users SET invites = invites + 1 WHERE user_id = %s", (ref_id,))
+                        conn.commit()
+                        logger.info(f"کاربر {user.id} از طریق دعوت {ref_id} ثبت شد")
+                        await context.bot.send_message(
+                            ref_id,
+                            "🎉 یه نفر با لینک دعوتت به گردونه شانس پیوست! یه چرخش رایگان برات اضافه شد! 🚀"
+                        )
+                        await update.message.reply_text(
+                            "🎉 تبریک! از طریق دعوت یه دوست وارد شدی! حالا توی کانال ما هستی و می‌تونی گردونه رو بچرخونی!",
+                            reply_markup=chat_menu()
+                        )
+                    else:
+                        await update.message.reply_text(
+                            "🎉 خوش آمدی به گردونه شانس!\n\n"
+                            "دو چرخش رایگان داری! با هر دعوت موفق، یه چرخش دیگه بگیر!\n"
+                            "برای شروع، یکی از گزینه‌های زیر رو انتخاب کن:",
+                            reply_markup=chat_menu()
+                        )
+            except ValueError:
+                await update.message.reply_text(
+                    "🎉 خوش آمدی به گردونه شانس!\n\n"
+                    "دو چرخش رایگان داری! با هر دعوت موفق، یه چرخش دیگه بگیر!\n"
+                    "برای شروع، یکی از گزینه‌های زیر رو انتخاب کن:",
+                    reply_markup=chat_menu()
+                )
         else:
             await update.message.reply_text(
                 "🎉 خوش آمدی به گردونه شانس!\n\n"
@@ -358,7 +395,7 @@ async def start(update: Update, context: ContextTypes):
                 reply_markup=chat_menu()
             )
     except Exception as e:
-        logger.error(f"خطا در پردازش دعوت برای کاربر {user.id}: {str(e)}")
+        logger.error(f"خطا در پردازش /start برای کاربر {user.id}: {str(e)}")
         await update.message.reply_text(
             f"❌ خطایی رخ داد: {str(e)}\nلطفاً دوباره امتحان کنید یا با پشتیبانی (@daniaam) تماس بگیرید.",
             reply_markup=chat_menu()
@@ -418,10 +455,6 @@ async def spin_wheel(user_id: int, context: ContextTypes) -> tuple:
             )
             conn.commit()
         
-        await context.bot.send_message(
-            ADMIN_ID,
-            f"🎡 کاربر {user_id} گردونه رو چرخوند و برنده شد: {amount:,} تومان"
-        )
         return amount, f"🎉 تبریک! شما برنده {amount:,} تومان شدید! 🎊\nدوباره بچرخون یا دوستاتو دعوت کن تا چرخش بیشتر بگیری!"
     except Exception as e:
         logger.error(f"خطا در spin_wheel برای کاربر {user_id}: {str(e)}")
@@ -684,10 +717,10 @@ async def handle_messages(update: Update, context: ContextTypes):
                 f"👤 کاربر: {user_id}\n"
                 f"💰 مقدار: {amount:,} تومان\n"
                 f"💳 شماره کارت: {card_number}\n"
-                f"لطفاً بررسی کنید."
+                f"لطفاً جایزه را پرداخت کنید و سپس از /confirm_payment {user_id} استفاده کنید."
             )
             await update.message.reply_text(
-                f"✅ درخواست برداشت {amount:,} تومان ثبت شد. با پشتیبانی (@daniaam) هماهنگ کنید.",
+                f"✅ درخواست برداشت {amount:,} تومان ثبت شد. ادمین جایزه شما رو پرداخت می‌کنه! لطفاً منتظر تأیید باشید.",
                 reply_markup=chat_menu()
             )
             context.user_data.clear()
@@ -708,7 +741,8 @@ async def set_menu_commands(application):
         BotCommand(command="/start", description="شروع ربات"),
         BotCommand(command="/backup_db", description="بکاپ دیتابیس (ادمین)"),
         BotCommand(command="/clear_db", description="پاک کردن دیتابیس (ادمین)"),
-        BotCommand(command="/stats", description="آمار ربات (ادمین)")
+        BotCommand(command="/stats", description="آمار ربات (ادمین)"),
+        BotCommand(command="/confirm_payment", description="تأیید پرداخت جایزه (ادمین)")
     ]
     await application.bot.set_my_commands(commands)
 
@@ -717,6 +751,7 @@ application.add_handler(CommandHandler("menu", menu))
 application.add_handler(CommandHandler("backup_db", backup_db))
 application.add_handler(CommandHandler("clear_db", clear_db))
 application.add_handler(CommandHandler("stats", stats))
+application.add_handler(CommandHandler("confirm_payment", confirm_payment))
 application.add_handler(CallbackQueryHandler(callback_handler))
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_messages))
 
