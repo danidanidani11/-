@@ -777,7 +777,7 @@ async def handle_messages(update: Update, context: ContextTypes):
                     reply_markup=chat_menu()
                 )
             else:
-                await query.message.reply_text(
+                await update.message.reply_text(
                     f"💰 موجودی شما: {balance:,} تومان\n"
                     f"🎡 تعداد فرصت گردونه: {spins}\n\n"
                     f"📝 برای برداشت، می‌تونی درخواست بدی! (حداقل {MIN_WITHDRAWAL:,} تومان)\n"
