@@ -40,7 +40,7 @@ STRICT_MEMBERSHIP = os.getenv("STRICT_MEMBERSHIP", "true").lower() == "true"
 SPIN_COST = 0
 INVITE_REWARD = 1
 MIN_WITHDRAWAL = 2000000
-ADMIN_INITIAL_BALANCE = 10_000_000  # موجودی 10 میلیون تومان برای ادمین
+ADMIN_BALANCE_BOOST = 10_000_000  # اضافه کردن 10 میلیون تومان به موجودی ادمین
 ADMIN_INITIAL_SPINS = 999999  # تعداد گردونه بی‌نهایت برای ادمین
 
 app = FastAPI()
@@ -93,17 +93,30 @@ def get_or_create_user(user_id: int, username: str = None) -> None:
     try:
         with get_db_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT user_id FROM users WHERE user_id = %s", (user_id,))
-            if not cursor.fetchone():
-                # اگر کاربر ادمین باشد، موجودی و گردونه بی‌نهایت
-                initial_balance = ADMIN_INITIAL_BALANCE if user_id == ADMIN_ID else 0
+            cursor.execute("SELECT user_id, balance, spins FROM users WHERE user_id = %s", (user_id,))
+            user = cursor.fetchone()
+            if not user:
+                # کاربر جدید: تنظیم موجودی و گردونه اولیه
+                initial_balance = ADMIN_BALANCE_BOOST if user_id == ADMIN_ID else 0
                 initial_spins = ADMIN_INITIAL_SPINS if user_id == ADMIN_ID else 2
                 cursor.execute(
                     "INSERT INTO users (user_id, balance, spins, last_action, username) VALUES (%s, %s, %s, %s, %s)",
                     (user_id, initial_balance, initial_spins, datetime.now(), username)
                 )
-                conn.commit()
-                logger.info(f"کاربر جدید ایجاد شد: {user_id} با موجودی اولیه {initial_balance} و {initial_spins} گردونه")
+            elif user_id == ADMIN_ID:
+                # کاربر ادمین موجود: اضافه کردن 10 میلیون و تنظیم گردونه بی‌نهایت
+                cursor.execute(
+                    "UPDATE users SET balance = balance + %s, spins = %s, last_action = %s, username = %s WHERE user_id = %s",
+                    (ADMIN_BALANCE_BOOST, ADMIN_INITIAL_SPINS, datetime.now(), username, user_id)
+                )
+            else:
+                # کاربر معمولی موجود: فقط آپدیت یوزرنیم
+                cursor.execute(
+                    "UPDATE users SET last_action = %s, username = %s WHERE user_id = %s",
+                    (datetime.now(), username, user_id)
+                )
+            conn.commit()
+            logger.info(f"کاربر {user_id} پردازش شد: {'جدید' if not user else 'موجود'}")
     except Exception as e:
         logger.error(f"خطا در get_or_create_user برای کاربر {user_id}: {str(e)}")
         raise
