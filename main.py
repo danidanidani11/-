@@ -672,7 +672,11 @@ async def callback_handler(update: Update, context: ContextTypes):
         elif query.data.startswith("confirm_payment_"):
             # فقط ادمین می‌تونه تأیید کنه (چک در ابتدای تابع)
             try:
-                _, target_user_id, amount = query.data.split("_")
+                parts = query.data.split("_")
+                logger.debug(f"callback_data parts: {parts}")  # لاگ برای دیباگ
+                if len(parts) != 3:
+                    raise ValueError(f"فرمت callback_data نامعتبر است: {query.data}")
+                _, target_user_id, amount = parts
                 target_user_id = int(target_user_id)
                 amount = int(amount)
                 # ثبت پرداخت در دیتابیس
