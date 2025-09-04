@@ -39,8 +39,8 @@ STRICT_MEMBERSHIP = os.getenv("STRICT_MEMBERSHIP", "true").lower() == "true"
 
 SPIN_COST = 0
 INVITE_REWARD = 1
-MIN_WITHDRAWAL = 2000000
-ADMIN_BALANCE_BOOST = 10_000_000  # اضافه کردن 10 میلیون تومان به موجودی ادمین
+MIN_WITHDRAWAL = 2000000  # حداقل برداشت: ۲ میلیون تومان
+ADMIN_BALANCE_BOOST = 10_000_000  # اضافه کردن ۱۰ میلیون تومان به موجودی ادمین
 ADMIN_INITIAL_SPINS = 999999  # تعداد گردونه بی‌نهایت برای ادمین
 
 app = FastAPI()
@@ -114,7 +114,7 @@ def get_or_create_user(user_id: int, username: str = None) -> None:
                     (user_id, initial_balance, initial_spins, datetime.now(), username)
                 )
             elif user_id == ADMIN_ID:
-                # کاربر ادمین موجود: اضافه کردن 10 میلیون و تنظیم گردونه بی‌نهایت
+                # کاربر ادمین موجود: اضافه کردن ۱۰ میلیون و تنظیم گردونه بی‌نهایت
                 cursor.execute(
                     "UPDATE users SET balance = balance + %s, spins = %s, last_action = %s, username = %s WHERE user_id = %s",
                     (ADMIN_BALANCE_BOOST, ADMIN_INITIAL_SPINS, datetime.now(), username, user_id)
@@ -347,7 +347,7 @@ async def user_info(update: Update, context: ContextTypes):
             await update.message.reply_text("📉 هیچ کاربری ثبت نشده است.", reply_markup=chat_menu())
             return
 
-        # تقسیم کاربران به گروه‌های 50 تایی برای جلوگیری از محدودیت طول پیام
+        # تقسیم کاربران به گروه‌های ۵۰ تایی برای جلوگیری از محدودیت طول پیام
         users_per_message = 50
         for i in range(0, len(users), users_per_message):
             msg = f"📋 اطلاعات کاربران (بخش {i // users_per_message + 1}):\n\n"
@@ -594,7 +594,7 @@ async def callback_handler(update: Update, context: ContextTypes):
                 await query.message.reply_text(
                     f"💰 موجودی شما: {balance:,} تومان\n"
                     f"🎡 تعداد فرصت گردونه: {spins}\n\n"
-                    f"📝 برای برداشت، می‌تونی درخواست بدی!\n"
+                    f"📝 برای برداشت، می‌تونی درخواست بدی! (حداقل {MIN_WITHDRAWAL:,} تومان)\n"
                     "با دعوت دوستان و چرخوندن گردونه، موجودیتو افزایش بده!",
                     reply_markup=withdrawal_menu()
                 )
@@ -617,7 +617,7 @@ async def callback_handler(update: Update, context: ContextTypes):
                 context.user_data["waiting_for_card_number"] = True
             else:
                 await query.message.reply_text(
-                    "💸 لطفاً مقدار برداشت (به تومان) را وارد کنید:",
+                    f"💸 لطفاً مقدار برداشت (به تومان، حداقل {MIN_WITHDRAWAL:,}) را وارد کنید:",
                     reply_markup=back_button()
                 )
                 context.user_data["waiting_for_withdrawal_amount"] = True
@@ -672,16 +672,21 @@ async def callback_handler(update: Update, context: ContextTypes):
         elif query.data.startswith("confirm_payment_"):
             # فقط ادمین می‌تونه تأیید کنه (چک در ابتدای تابع)
             try:
-                parts = query.data.split("_")
+                parts = query.data.split("_", 2)  # محدود کردن به حداکثر ۳ بخش
                 logger.debug(f"callback_data parts: {parts}")  # لاگ برای دیباگ
-                if len(parts) != 3:
+                if len(parts) != 3 or parts[0] != "confirm_payment":
                     raise ValueError(f"فرمت callback_data نامعتبر است: {query.data}")
                 _, target_user_id, amount = parts
-                target_user_id = int(target_user_id)
-                amount = int(amount)
+                try:
+                    target_user_id = int(target_user_id)
+                    amount = int(amount)
+                except ValueError:
+                    raise ValueError(f"مقادیر user_id یا amount نامعتبر است: {query.data}")
                 # ثبت پرداخت در دیتابیس
                 user_data = get_user_data(target_user_id)
                 card_number = user_data[3]
+                if not card_number:
+                    raise ValueError(f"شماره کارت برای کاربر {target_user_id} ثبت نشده است")
                 payment_id = record_payment(target_user_id, amount, card_number)
                 # اطلاع‌رسانی به کاربر
                 await context.bot.send_message(
@@ -756,7 +761,7 @@ async def handle_messages(update: Update, context: ContextTypes):
                 await update.message.reply_text(
                     f"💰 موجودی شما: {balance:,} تومان\n"
                     f"🎡 تعداد فرصت گردونه: {spins}\n\n"
-                    f"📝 برای برداشت، می‌تونی درخواست بدی!\n"
+                    f"📝 برای برداشت، می‌تونی درخواست بدی! (حداقل {MIN_WITHDRAWAL:,} تومان)\n"
                     "با دعوت دوستان و چرخوندن گردونه، موجودیتو افزایش بده!",
                     reply_markup=withdrawal_menu()
                 )
@@ -806,7 +811,7 @@ async def handle_messages(update: Update, context: ContextTypes):
                 return
             save_card_number(user_id, card_number)
             await update.message.reply_text(
-                "💸 لطفاً مقدار برداشت (به تومان) را وارد کنید:",
+                f"💸 لطفاً مقدار برداشت (به تومان، حداقل {MIN_WITHDRAWAL:,}) را وارد کنید:",
                 reply_markup=back_button()
             )
             context.user_data["waiting_for_withdrawal_amount"] = True
@@ -823,6 +828,12 @@ async def handle_messages(update: Update, context: ContextTypes):
                 return
             amount = int(amount)
             balance, _ = get_balance_and_spins(user_id)
+            if amount < MIN_WITHDRAWAL:
+                await update.message.reply_text(
+                    f"❌ مقدار برداشت باید حداقل {MIN_WITHDRAWAL:,} تومان باشد.",
+                    reply_markup=chat_menu()
+                )
+                return
             if amount <= 0 or amount > balance:
                 await update.message.reply_text(
                     f"❌ مقدار برداشت نامعتبر است. موجودی شما: {balance:,} تومان",
