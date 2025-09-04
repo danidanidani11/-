@@ -40,7 +40,8 @@ STRICT_MEMBERSHIP = os.getenv("STRICT_MEMBERSHIP", "true").lower() == "true"
 SPIN_COST = 0
 INVITE_REWARD = 1
 MIN_WITHDRAWAL = 2000000
-INFINITE_BALANCE = 999999999  # برای موجودی بی‌نهایت ادمین
+ADMIN_INITIAL_BALANCE = 10_000_000  # موجودی 10 میلیون تومان برای ادمین
+ADMIN_INITIAL_SPINS = 999999  # تعداد گردونه بی‌نهایت برای ادمین
 
 app = FastAPI()
 
@@ -67,10 +68,11 @@ def init_db():
                     spins INTEGER DEFAULT 2,
                     total_earnings INTEGER DEFAULT 0,
                     card_number TEXT,
-                    last_action TIMESTAMP,
-                    username TEXT
+                    last_action TIMESTAMP
                 )
             ''')
+            # اضافه کردن ستون username اگر وجود نداشته باشد
+            cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT")
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS top_winners (
                     user_id BIGINT PRIMARY KEY,
@@ -93,20 +95,20 @@ def get_or_create_user(user_id: int, username: str = None) -> None:
             cursor = conn.cursor()
             cursor.execute("SELECT user_id FROM users WHERE user_id = %s", (user_id,))
             if not cursor.fetchone():
-                balance = INFINITE_BALANCE if user_id == ADMIN_ID else 0
+                # اگر کاربر ادمین باشد، موجودی و گردونه بی‌نهایت
+                initial_balance = ADMIN_INITIAL_BALANCE if user_id == ADMIN_ID else 0
+                initial_spins = ADMIN_INITIAL_SPINS if user_id == ADMIN_ID else 2
                 cursor.execute(
                     "INSERT INTO users (user_id, balance, spins, last_action, username) VALUES (%s, %s, %s, %s, %s)",
-                    (user_id, balance, 2, datetime.now(), username)
+                    (user_id, initial_balance, initial_spins, datetime.now(), username)
                 )
                 conn.commit()
-                logger.info(f"کاربر جدید ایجاد شد: {user_id}")
+                logger.info(f"کاربر جدید ایجاد شد: {user_id} با موجودی اولیه {initial_balance} و {initial_spins} گردونه")
     except Exception as e:
         logger.error(f"خطا در get_or_create_user برای کاربر {user_id}: {str(e)}")
         raise
 
 def update_balance(user_id: int, amount: int) -> None:
-    if user_id == ADMIN_ID:
-        return  # ادمین موجودی بی‌نهایت داره، نیازی به آپدیت نیست
     try:
         with get_db_connection() as conn:
             cursor = conn.cursor()
@@ -140,8 +142,6 @@ def get_balance_and_spins(user_id: int) -> tuple:
             cursor = conn.cursor()
             cursor.execute("SELECT balance, spins FROM users WHERE user_id = %s", (user_id,))
             result = cursor.fetchone()
-            if user_id == ADMIN_ID:
-                return (INFINITE_BALANCE, result[1] if result else 2)
             return result if result else (0, 2)
     except Exception as e:
         logger.error(f"خطا در get_balance_and_spins برای کاربر {user_id}: {str(e)}")
@@ -151,11 +151,18 @@ def get_user_data(user_id: int) -> tuple:
     try:
         with get_db_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT balance, invites, total_earnings, card_number, username FROM users WHERE user_id = %s", (user_id,))
+            # بررسی وجود ستون username
+            cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'username'")
+            has_username = cursor.fetchone() is not None
+            if has_username:
+                cursor.execute("SELECT balance, invites, total_earnings, card_number, username FROM users WHERE user_id = %s", (user_id,))
+            else:
+                cursor.execute("SELECT balance, invites, total_earnings, card_number FROM users WHERE user_id = %s", (user_id,))
             result = cursor.fetchone()
-            if user_id == ADMIN_ID:
-                return (INFINITE_BALANCE, result[1] if result else 0, result[2] if result else 0, result[3] if result else None, result[4] if result else None)
-            return result if result else (0, 0, 0, None, None)
+            if has_username:
+                return result if result else (0, 0, 0, None, None)
+            else:
+                return result + (None,) if result else (0, 0, 0, None, None)
     except Exception as e:
         logger.error(f"خطا در get_user_data برای کاربر {user_id}: {str(e)}")
         raise
@@ -281,28 +288,40 @@ async def user_info(update: Update, context: ContextTypes):
     try:
         with get_db_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT user_id, username, balance, invites FROM users ORDER BY user_id")
+            # بررسی وجود ستون username
+            cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'username'")
+            has_username = cursor.fetchone() is not None
+            if has_username:
+                cursor.execute("SELECT user_id, username, balance, invites FROM users ORDER BY user_id")
+            else:
+                cursor.execute("SELECT user_id, balance, invites FROM users ORDER BY user_id")
             users = cursor.fetchall()
 
         if not users:
-            await update.message.reply_text("📋 هیچ کاربری ثبت نشده است.", reply_markup=chat_menu())
+            await update.message.reply_text("📉 هیچ کاربری ثبت نشده است.", reply_markup=chat_menu())
             return
 
         # تقسیم کاربران به گروه‌های 50 تایی برای جلوگیری از محدودیت طول پیام
         users_per_message = 50
         for i in range(0, len(users), users_per_message):
-            msg = "📋 اطلاعات کاربران:\n\n"
+            msg = f"📋 اطلاعات کاربران (بخش {i // users_per_message + 1}):\n\n"
             for user in users[i:i + users_per_message]:
-                user_id, username, balance, invites = user
-                balance_display = "بی‌نهایت" if user_id == ADMIN_ID else f"{balance:,} تومان"
-                username_display = username if username else "نامشخص"
-                msg += f"👤 آیدی عددی: {user_id}\n"
-                msg += f"📛 یوزرنیم: @{username_display}\n"
-                msg += f"💰 موجودی: {balance_display}\n"
-                msg += f"👥 دعوت‌ها: {invites} نفر\n"
-                msg += "────────────\n"
+                user_id = user[0]
+                if has_username:
+                    username, balance, invites = user[1], user[2], user[3]
+                else:
+                    balance, invites = user[1], user[2]
+                    username = None
+                username_display = f"@{username}" if username else "بدون یوزرنیم"
+                msg += (
+                    f"👤 آیدی عددی: {user_id}\n"
+                    f"📛 یوزرنیم: {username_display}\n"
+                    f"💰 موجودی: {balance:,} تومان\n"
+                    f"👥 دعوت‌ها: {invites} نفر\n"
+                    f"{'-' * 20}\n"
+                )
             await update.message.reply_text(msg, reply_markup=chat_menu())
-            await asyncio.sleep(0.5)  # جلوگیری از اسپم
+            await asyncio.sleep(0.5)  # تاخیر کوچک برای جلوگیری از اسپم
 
         logger.info("اطلاعات کاربران برای ادمین ارسال شد")
     except Exception as e:
@@ -507,20 +526,25 @@ async def callback_handler(update: Update, context: ContextTypes):
 
         elif query.data == "balance":
             balance, spins = get_balance_and_spins(user_id)
-            balance_display = "بی‌نهایت" if user_id == ADMIN_ID else f"{balance:,} تومان"
-            await query.message.reply_text(
-                f"💰 موجودی شما: {balance_display}\n"
-                f"🎡 تعداد فرصت گردونه: {spins}\n\n"
-                f"{'📝 برای برداشت، می‌تونی درخواست بدی!' if balance >= MIN_WITHDRAWAL and user_id != ADMIN_ID else '❌ موجودی کافی نداری! حداقل ۲,۰۰۰,۰۰۰ تومان نیازه.'}\n"
-                "با دعوت دوستان و چرخوندن گردونه، موجودیتو افزایش بده!",
-                reply_markup=withdrawal_menu() if balance >= MIN_WITHDRAWAL and user_id != ADMIN_ID else chat_menu()
-            )
+            if balance < MIN_WITHDRAWAL:
+                await query.message.reply_text(
+                    f"💰 موجودی شما: {balance:,} تومان\n"
+                    f"🎡 تعداد فرصت گردونه: {spins}\n\n"
+                    f"❌ موجودی کافی نداری! حداقل {MIN_WITHDRAWAL:,} تومان نیازه.\n"
+                    "با دعوت دوستان و چرخوندن گردونه، موجودیتو افزایش بده!",
+                    reply_markup=chat_menu()
+                )
+            else:
+                await query.message.reply_text(
+                    f"💰 موجودی شما: {balance:,} تومان\n"
+                    f"🎡 تعداد فرصت گردونه: {spins}\n\n"
+                    "📝 برای برداشت، می‌تونی درخواست بدی!\n"
+                    "با دعوت دوستان و چرخوندن گردونه، موجودیتو افزایش بده!",
+                    reply_markup=withdrawal_menu()
+                )
 
         elif query.data == "request_withdrawal":
             balance, _ = get_balance_and_spins(user_id)
-            if user_id == ADMIN_ID:
-                await query.message.reply_text("❌ ادمین نمی‌تونه برداشت کنه!", reply_markup=chat_menu())
-                return
             if balance < MIN_WITHDRAWAL:
                 await query.message.reply_text(
                     f"❌ موجودی کافی نداری! حداقل {MIN_WITHDRAWAL:,} تومان نیازه.",
@@ -562,21 +586,18 @@ async def callback_handler(update: Update, context: ContextTypes):
                 rows = cursor.fetchall()
             msg = "🏆 پر درآمدهای گردونه شانس:\n\n"
             for i, row in enumerate(rows, 1):
-                msg += f"{i}. آیدی عددی: {row[0]} - درآمد: {row[1]:,} تومان\n"
+                msg += f"{i}. آیدی: {row[0]} - درآمد: {row[1]:,} تومان\n"
             if not rows:
                 msg = "🏆 هنوز برنده‌ای ثبت نشده! تو اولین باش! 😎"
             await query.message.reply_text(msg, reply_markup=chat_menu())
 
         elif query.data == "profile":
             user_data = get_user_data(user_id)
-            balance, invites, total_earnings, _, username = user_data
+            balance, invites, total_earnings, _, _ = user_data
             _, spins = get_balance_and_spins(user_id)
-            balance_display = "بی‌نهایت" if user_id == ADMIN_ID else f"{balance:,} تومان"
-            username_display = username if username else "نامشخص"
             await query.message.reply_text(
                 f"👤 پروفایل شما:\n\n"
-                f"📛 یوزرنیم: @{username_display}\n"
-                f"💰 موجودی: {balance_display}\n"
+                f"💰 موجودی: {balance:,} تومان\n"
                 f"🎡 تعداد فرصت گردونه: {spins}\n"
                 f"👥 دعوت‌های موفق: {invites} نفر\n"
                 f"💸 درآمد کل: {total_earnings:,} تومان\n\n"
@@ -635,14 +656,22 @@ async def handle_messages(update: Update, context: ContextTypes):
 
         elif text == "💰 موجودی":
             balance, spins = get_balance_and_spins(user_id)
-            balance_display = "بی‌نهایت" if user_id == ADMIN_ID else f"{balance:,} تومان"
-            await update.message.reply_text(
-                f"💰 موجودی شما: {balance_display}\n"
-                f"🎡 تعداد فرصت گردونه: {spins}\n\n"
-                f"{'📝 برای برداشت، می‌تونی درخواست بدی!' if balance >= MIN_WITHDRAWAL and user_id != ADMIN_ID else '❌ موجودی کافی نداری! حداقل ۲,۰۰۰,۰۰۰ تومان نیازه.'}\n"
-                "با دعوت دوستان و چرخوندن گردونه، موجودیتو افزایش بده!",
-                reply_markup=withdrawal_menu() if balance >= MIN_WITHDRAWAL and user_id != ADMIN_ID else chat_menu()
-            )
+            if balance < MIN_WITHDRAWAL:
+                await update.message.reply_text(
+                    f"💰 موجودی شما: {balance:,} تومان\n"
+                    f"🎡 تعداد فرصت گردونه: {spins}\n\n"
+                    f"❌ موجودی کافی نداری! حداقل {MIN_WITHDRAWAL:,} تومان نیازه.\n"
+                    "با دعوت دوستان و چرخوندن گردونه، موجودیتو افزایش بده!",
+                    reply_markup=chat_menu()
+                )
+            else:
+                await update.message.reply_text(
+                    f"💰 موجودی شما: {balance:,} تومان\n"
+                    f"🎡 تعداد فرصت گردونه: {spins}\n\n"
+                    "📝 برای برداشت، می‌تونی درخواست بدی!\n"
+                    "با دعوت دوستان و چرخوندن گردونه، موجودیتو افزایش بده!",
+                    reply_markup=withdrawal_menu()
+                )
 
         elif text == "🏆 پر درآمد ها":
             with get_db_connection() as conn:
@@ -651,21 +680,18 @@ async def handle_messages(update: Update, context: ContextTypes):
                 rows = cursor.fetchall()
             msg = "🏆 پر درآمدهای گردونه شانس:\n\n"
             for i, row in enumerate(rows, 1):
-                msg += f"{i}. آیدی عددی: {row[0]} - درآمد: {row[1]:,} تومان\n"
+                msg += f"{i}. آیدی: {row[0]} - درآمد: {row[1]:,} تومان\n"
             if not rows:
                 msg = "🏆 هنوز برنده‌ای ثبت نشده! تو اولین باش! 😎"
             await update.message.reply_text(msg, reply_markup=chat_menu())
 
         elif text == "👤 پروفایل":
             user_data = get_user_data(user_id)
-            balance, invites, total_earnings, _, username = user_data
+            balance, invites, total_earnings, _, _ = user_data
             _, spins = get_balance_and_spins(user_id)
-            balance_display = "بی‌نهایت" if user_id == ADMIN_ID else f"{balance:,} تومان"
-            username_display = username if username else "نامشخص"
             await update.message.reply_text(
                 f"👤 پروفایل شما:\n\n"
-                f"📛 یوزرنیم: @{username_display}\n"
-                f"💰 موجودی: {balance_display}\n"
+                f"💰 موجودی: {balance:,} تومان\n"
                 f"🎡 تعداد فرصت گردونه: {spins}\n"
                 f"👥 دعوت‌های موفق: {invites} نفر\n"
                 f"💸 درآمد کل: {total_earnings:,} تومان\n\n"
