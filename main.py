@@ -449,7 +449,7 @@ async def start(update: Update, context: ContextTypes):
     except Exception as e:
         logger.error(f"خطا در ایجاد/دریافت کاربر {user.id}: {str(e)}")
         await update.message.reply_text(
-            "❌ خطایی رخ داد. لطفاً دوباره امتحان کنید یا با پشتیبانی (@daniaam) تماس بگیرید.",
+            "❌ خطایی رخ داد. لطفاً دوباره امتحان کنید یا با پشتیبانی (@teazadmin) تماس بگیرید.",
             reply_markup=chat_menu()
         )
         return
@@ -458,7 +458,7 @@ async def start(update: Update, context: ContextTypes):
         if not await check_channel_membership(user.id, context):
             await update.message.reply_text(
                 f"⚠️ لطفا ابتدا در کانال ما عضو شوید:\n{CHANNEL_ID}\nسپس /start را دوباره بزنید.\n\n"
-                "اگر مشکلی پیش آمد، با پشتیبانی (@daniaam) تماس بگیرید."
+                "اگر مشکلی پیش آمد، با پشتیبانی (@teazadmin) تماس بگیرید."
             )
             return
 
@@ -493,7 +493,7 @@ async def start(update: Update, context: ContextTypes):
     except Exception as e:
         logger.error(f"خطا در پردازش /start برای کاربر {user.id}: {str(e)}")
         await update.message.reply_text(
-            f"❌ خطایی رخ داد: {str(e)}\nلطفاً دوباره امتحان کنید یا با پشتیبانی (@daniaam) تماس بگیرید.",
+            f"❌ خطایی رخ داد: {str(e)}\nلطفاً دوباره امتحان کنید یا با پشتیبانی (@teazadmin) تماس بگیرید.",
             reply_markup=chat_menu()
         )
 
@@ -510,7 +510,7 @@ async def menu(update: Update, context: ContextTypes):
     except Exception as e:
         logger.error(f"خطای بررسی عضویت در منو برای کاربر {user_id}: {str(e)}")
         await update.message.reply_text(
-            "⚠️ خطایی در بررسی عضویت رخ داد. لطفاً دوباره امتحان کنید یا با پشتیبانی (@daniaam) تماس بگیرید.",
+            "⚠️ خطایی در بررسی عضویت رخ داد. لطفاً دوباره امتحان کنید یا با پشتیبانی (@teazadmin) تماس بگیرید.",
             reply_markup=chat_menu()
         )
 
@@ -571,7 +571,7 @@ async def callback_handler(update: Update, context: ContextTypes):
     except Exception as e:
         logger.error(f"خطا در ایجاد/دریافت کاربر {user_id} در callback: {str(e)}")
         await query.message.reply_text(
-            f"❌ خطایی رخ داد: {str(e)}\nلطفاً دوباره امتحان کنید یا با پشتیبانی (@daniaam) تماس بگیرید.",
+            f"❌ خطایی رخ داد: {str(e)}\nلطفاً دوباره امتحان کنید یا با پشتیبانی (@teazadmin) تماس بگیرید.",
             reply_markup=chat_menu()
         )
         return
@@ -580,14 +580,14 @@ async def callback_handler(update: Update, context: ContextTypes):
         if not await check_channel_membership(user_id, context):
             await query.message.reply_text(
                 f"⚠️ لطفا ابتدا در کانال ما عضو شوید:\n{CHANNEL_ID}\nسپس دوباره امتحان کنید.\n\n"
-                "اگر مشکلی پیش آمد، با پشتیبانی (@daniaam) تماس بگیرید.",
+                "اگر مشکلی پیش آمد، با پشتیبانی (@teazadmin) تماس بگیرید.",
                 reply_markup=chat_menu()
             )
             return
     except Exception as e:
         logger.error(f"خطای بررسی عضویت در callback برای کاربر {user_id}: {str(e)}")
         await query.message.reply_text(
-            "⚠️ خطایی در بررسی عضویت رخ داد. لطفاً دوباره امتحان کنید یا با پشتیبانی (@daniaam) تماس بگیرید.",
+            "⚠️ خطایی در بررسی عضویت رخ داد. لطفاً دوباره امتحان کنید یا با پشتیبانی (@teazadmin) تماس بگیرید.",
             reply_markup=chat_menu()
         )
         return
@@ -723,7 +723,7 @@ async def callback_handler(update: Update, context: ContextTypes):
     except Exception as e:
         logger.error(f"خطای هندلر callback برای کاربر {user_id}: {str(e)}")
         await query.message.reply_text(
-            f"❌ خطایی رخ داد: {str(e)}\nلطفاً دوباره امتحان کنید یا با پشتیبانی (@daniaam) تماس بگیرید.",
+            f"❌ خطایی رخ داد: {str(e)}\nلطفاً دوباره امتحان کنید یا با پشتیبانی (@teazadmin) تماس بگیرید.",
             reply_markup=chat_menu()
         )
 
@@ -736,14 +736,14 @@ async def handle_messages(update: Update, context: ContextTypes):
         if not await check_channel_membership(user_id, context):
             await update.message.reply_text(
                 f"⚠️ لطفا ابتدا در کانال ما عضو شوید:\n{CHANNEL_ID}\nسپس دوباره امتحان کنید.\n\n"
-                "اگر مشکلی پیش آمد، با پشتیبانی (@daniaam) تماس بگیرید.",
+                "اگر مشکلی پیش آمد، با پشتیبانی (@teazadmin) تماس بگیرید.",
                 reply_markup=chat_menu()
             )
             return
     except Exception as e:
         logger.error(f"خطای بررسی عضویت در هندلر پیام برای کاربر {user_id}: {str(e)}")
         await update.message.reply_text(
-            "⚠️ خطایی در بررسی عضویت رخ داد. لطفاً دوباره امتحان کنید یا با پشتیبانی (@daniaam) تماس بگیرید.",
+            "⚠️ خطایی در بررسی عضویت رخ داد. لطفاً دوباره امتحان کنید یا با پشتیبانی (@teazadmin) تماس بگیرید.",
             reply_markup=chat_menu()
         )
         return
@@ -876,7 +876,7 @@ async def handle_messages(update: Update, context: ContextTypes):
     except Exception as e:
         logger.error(f"خطای هندلر پیام برای کاربر {user_id}: {str(e)}")
         await update.message.reply_text(
-            f"❌ خطایی رخ داد: {str(e)}\nلطفاً دوباره امتحان کنید یا با پشتیبانی (@daniaam) تماس بگیرید.",
+            f"❌ خطایی رخ داد: {str(e)}\nلطفاً دوباره امتحان کنید یا با پشتیبانی (@teazadmin) تماس بگیرید.",
             reply_markup=chat_menu()
         )
 
