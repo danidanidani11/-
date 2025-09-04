@@ -81,6 +81,16 @@ def init_db():
                     last_win TIMESTAMP
                 )
             ''')
+            # جدول جدید برای ثبت پرداخت‌های تأییدشده
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS payments (
+                    payment_id SERIAL PRIMARY KEY,
+                    user_id BIGINT,
+                    amount INTEGER,
+                    card_number TEXT,
+                    confirmed_at TIMESTAMP
+                )
+            ''')
             conn.commit()
             logger.info("دیتابیس با موفقیت مقداردهی شد")
     except Exception as e:
@@ -194,6 +204,22 @@ def save_card_number(user_id: int, card_number: str) -> None:
         logger.error(f"خطا در save_card_number برای کاربر {user_id}: {str(e)}")
         raise
 
+def record_payment(user_id: int, amount: int, card_number: str) -> int:
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO payments (user_id, amount, card_number, confirmed_at) VALUES (%s, %s, %s, %s) RETURNING payment_id",
+                (user_id, amount, card_number, datetime.now())
+            )
+            payment_id = cursor.fetchone()[0]
+            conn.commit()
+            logger.info(f"پرداخت برای کاربر {user_id} با مقدار {amount} ثبت شد: payment_id={payment_id}")
+            return payment_id
+    except Exception as e:
+        logger.error(f"خطا در record_payment برای کاربر {user_id}: {str(e)}")
+        raise
+
 @retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
 async def check_channel_membership(user_id: int, context: ContextTypes) -> bool:
     try:
@@ -227,10 +253,13 @@ async def backup_db(update: Update, context: ContextTypes):
             users = cursor.fetchall()
             cursor.execute("SELECT * FROM top_winners")
             top_winners = cursor.fetchall()
+            cursor.execute("SELECT * FROM payments")
+            payments = cursor.fetchall()
 
         backup_data = {
             "users": [dict(zip([desc[0] for desc in cursor.description], row)) for row in users],
-            "top_winners": [dict(zip([desc[0] for desc in cursor.description], row)) for row in top_winners]
+            "top_winners": [dict(zip([desc[0] for desc in cursor.description], row)) for row in top_winners],
+            "payments": [dict(zip([desc[0] for desc in cursor.description], row)) for row in payments]
         }
         backup_file = f"/tmp/backup_{int(time.time())}.json"
         with open(backup_file, "w", encoding="utf-8") as f:
@@ -260,6 +289,7 @@ async def clear_db(update: Update, context: ContextTypes):
             cursor = conn.cursor()
             cursor.execute("DELETE FROM users")
             cursor.execute("DELETE FROM top_winners")
+            cursor.execute("DELETE FROM payments")
             conn.commit()
         await update.message.reply_text("✅ دیتابیس با موفقیت پاک شد.", reply_markup=chat_menu())
     except Exception as e:
@@ -281,11 +311,14 @@ async def stats(update: Update, context: ContextTypes):
             total_invites = cursor.fetchone()[0] or 0
             cursor.execute("SELECT SUM(total_earnings) FROM users")
             total_earnings = cursor.fetchone()[0] or 0
+            cursor.execute("SELECT COUNT(*) FROM payments")
+            total_payments = cursor.fetchone()[0] or 0
         await update.message.reply_text(
             f"📊 آمار ربات:\n\n"
             f"👥 تعداد کل کاربران: {total_users:,}\n"
             f"📢 تعداد کل دعوت‌ها: {total_invites:,}\n"
-            f"💰 مجموع درآمد کاربران: {total_earnings:,} تومان",
+            f"💰 مجموع درآمد کاربران: {total_earnings:,} تومان\n"
+            f"💸 تعداد پرداخت‌های تأییدشده: {total_payments:,}",
             reply_markup=chat_menu()
         )
     except Exception as e:
@@ -295,7 +328,7 @@ async def stats(update: Update, context: ContextTypes):
 async def user_info(update: Update, context: ContextTypes):
     user_id = update.effective_user.id
     if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ شما اجازه انجام این عملیات را ندارید.", reply_markup=chat_menu())
+        await update.message.reply_text("❌ شما اجازه انجام این عملیات را ندارید.", reply_markup=.WraparoundMenu())
         return
 
     try:
@@ -369,6 +402,10 @@ def withdrawal_menu():
         [InlineKeyboardButton("💸 درخواست برداشت", callback_data="request_withdrawal")],
         [InlineKeyboardButton("🔙 بازگشت", callback_data="back")]
     ]
+    return InlineKeyboardMarkup(keyboard)
+
+def payment_confirmation_button(user_id: int, amount: int):
+    keyboard = [[InlineKeyboardButton("🔴 پرداخت شد", callback_data=f"confirm_payment_{user_id}_{amount}")]]
     return InlineKeyboardMarkup(keyboard)
 
 # --------------------------- هندلرها ---------------------------
@@ -506,6 +543,12 @@ async def callback_handler(update: Update, context: ContextTypes):
     await query.answer()
     user_id = query.from_user.id
     logger.debug(f"Callback دریافت شد از کاربر {user_id}: {query.data}")
+    
+    # فقط ادمین می‌تونه روی دکمه تأیید پرداخت کلیک کنه
+    if query.data.startswith("confirm_payment_") and user_id != ADMIN_ID:
+        await query.message.reply_text("❌ شما اجازه تأیید پرداخت را ندارید.", reply_markup=chat_menu())
+        return
+
     try:
         get_or_create_user(user_id, query.from_user.username)
     except Exception as e:
@@ -626,6 +669,34 @@ async def callback_handler(update: Update, context: ContextTypes):
                 reply_markup=chat_menu()
             )
 
+        elif query.data.startswith("confirm_payment_"):
+            # فقط ادمین می‌تونه تأیید کنه (چک در ابتدای تابع)
+            try:
+                _, target_user_id, amount = query.data.split("_")
+                target_user_id = int(target_user_id)
+                amount = int(amount)
+                # ثبت پرداخت در دیتابیس
+                user_data = get_user_data(target_user_id)
+                card_number = user_data[3]
+                payment_id = record_payment(target_user_id, amount, card_number)
+                # اطلاع‌رسانی به کاربر
+                await context.bot.send_message(
+                    target_user_id,
+                    f"✅ برداشت {amount:,} تومان به شماره کارت شما واریز شد! 🎉"
+                )
+                # ویرایش پیام ادمین برای غیرفعال کردن دکمه
+                await query.message.edit_text(
+                    query.message.text + f"\n\n✅ پرداخت تأیید شد (شناسه: {payment_id})",
+                    reply_markup=None
+                )
+                logger.info(f"پرداخت برای کاربر {target_user_id} با مقدار {amount} تأیید شد")
+            except Exception as e:
+                logger.error(f"خطا در تأیید پرداخت برای کاربر {user_id}: {str(e)}")
+                await query.message.reply_text(
+                    f"❌ خطا در تأیید پرداخت: {str(e)}",
+                    reply_markup=chat_menu()
+                )
+
     except Exception as e:
         logger.error(f"خطای هندلر callback برای کاربر {user_id}: {str(e)}")
         await query.message.reply_text(
@@ -681,7 +752,7 @@ async def handle_messages(update: Update, context: ContextTypes):
                 await update.message.reply_text(
                     f"💰 موجودی شما: {balance:,} تومان\n"
                     f"🎡 تعداد فرصت گردونه: {spins}\n\n"
-                    "📝 برای برداشت، می‌تونی درخواست بدی!\n"
+                    f"📝 برای برداشت، می‌تونی درخواست بدی!\n"
                     "با دعوت دوستان و چرخوندن گردونه، موجودیتو افزایش بده!",
                     reply_markup=withdrawal_menu()
                 )
@@ -758,13 +829,15 @@ async def handle_messages(update: Update, context: ContextTypes):
             invites = user_data[1]
             card_number = context.user_data.get("card_number")
             update_balance(user_id, -amount)
+            # ارسال درخواست برداشت به ادمین با دکمه تأیید
             await context.bot.send_message(
                 ADMIN_ID,
                 f"💸 درخواست برداشت جدید:\n"
                 f"👤 آیدی کاربر: {user_id}\n"
                 f"💰 مقدار برداشت: {amount:,} تومان\n"
                 f"👥 تعداد دعوت‌های موفق: {invites} نفر\n"
-                f"💳 شماره کارت: {card_number}"
+                f"💳 شماره کارت: {card_number}",
+                reply_markup=payment_confirmation_button(user_id, amount)
             )
             await update.message.reply_text(
                 f"✅ درخواست برداشت {amount:,} تومان ثبت شد. ادمین جایزه شما رو پرداخت می‌کنه! لطفاً منتظر تأیید باشید.",
