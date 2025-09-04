@@ -32,7 +32,7 @@ load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN", "8078210260:AAEX-vz_apP68a6WhzaGhuAKK7amC1qUiEY")
 ADMIN_ID = int(os.getenv("ADMIN_ID", 5542927340))
 YOUR_ID = int(os.getenv("YOUR_ID", 123456789))
-CHANNEL_ID = os.getenv("CHANNEL_ID", "@charkhoun")
+CHANNEL_ID = os.getenv("CHANNEL_ID", "@Charkhoun")
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://charkhon_user:grMZtPEdreHgfbZrmSnrueTjgpvTzdk2@dpg-d2sislggjchc73aeb7og-a/charkhon")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://0kik4x8alj.onrender.com")
 STRICT_MEMBERSHIP = os.getenv("STRICT_MEMBERSHIP", "true").lower() == "true"
@@ -465,22 +465,28 @@ async def callback_handler(update: Update, context: ContextTypes):
 
         elif query.data == "balance":
             balance, spins = get_balance_and_spins(user_id)
-            msg = (
-                f"💰 موجودی شما: {balance:,} تومان\n"
-                f"🎡 تعداد چرخش‌های رایگان: {spins}\n\n"
-                "📝 برای برداشت، موجودی شما باید حداقل ۲,۰۰۰,۰۰۰ تومان باشه.\n"
-                "با دعوت دوستان و چرخوندن گردونه، موجودیتو افزایش بده!"
-            )
-            if balance >= MIN_WITHDRAWAL:
-                await query.message.reply_text(msg, reply_markup=withdrawal_menu())
+            if balance < MIN_WITHDRAWAL:
+                await query.message.reply_text(
+                    f"💰 موجودی شما: {balance:,} تومان\n"
+                    f"🎡 تعداد چرخش‌های رایگان: {spins}\n\n"
+                    f"❌ موجودی کافی نداری! حداقل {MIN_WITHDRAWAL:,} تومان نیازه.\n"
+                    "با دعوت دوستان و چرخوندن گردونه، موجودیتو افزایش بده!",
+                    reply_markup=chat_menu()
+                )
             else:
-                await query.message.reply_text(msg, reply_markup=chat_menu())
+                await query.message.reply_text(
+                    f"💰 موجودی شما: {balance:,} تومان\n"
+                    f"🎡 تعداد چرخش‌های رایگان: {spins}\n\n"
+                    "📝 برای برداشت، می‌تونی درخواست بدی!\n"
+                    "با دعوت دوستان و چرخوندن گردونه، موجودیتو افزایش بده!",
+                    reply_markup=withdrawal_menu()
+                )
 
         elif query.data == "request_withdrawal":
             balance, _ = get_balance_and_spins(user_id)
             if balance < MIN_WITHDRAWAL:
                 await query.message.reply_text(
-                    f"❌ موجودی شما برای برداشت کافی نیست. حداقل موجودی: {MIN_WITHDRAWAL:,} تومان",
+                    f"❌ موجودی کافی نداری! حداقل {MIN_WITHDRAWAL:,} تومان نیازه.",
                     reply_markup=chat_menu()
                 )
                 return
@@ -537,7 +543,7 @@ async def callback_handler(update: Update, context: ContextTypes):
             )
 
         elif query.data == "invite":
-            invite_link = f"https://t.me/charkhoon_bot?start={user_id}"
+            invite_link = f"https://t.me/Charkhoun_bot?start={user_id}"
             await query.message.reply_text(
                 f"📢 لینک دعوت اختصاصی شما:\n{invite_link}\n\n"
                 "دوستاتو دعوت کن و با هر دعوت موفق، یه چرخش رایگان بگیر! 🚀",
@@ -587,16 +593,22 @@ async def handle_messages(update: Update, context: ContextTypes):
 
         elif text == "💰 موجودی":
             balance, spins = get_balance_and_spins(user_id)
-            msg = (
-                f"💰 موجودی شما: {balance:,} تومان\n"
-                f"🎡 تعداد چرخش‌های رایگان: {spins}\n\n"
-                "📝 برای برداشت، موجودی شما باید حداقل ۲,۰۰۰,۰۰۰ تومان باشه.\n"
-                "با دعوت دوستان و چرخوندن گردونه، موجودیتو افزایش بده!"
-            )
-            if balance >= MIN_WITHDRAWAL:
-                await update.message.reply_text(msg, reply_markup=withdrawal_menu())
+            if balance < MIN_WITHDRAWAL:
+                await update.message.reply_text(
+                    f"💰 موجودی شما: {balance:,} تومان\n"
+                    f"🎡 تعداد چرخش‌های رایگان: {spins}\n\n"
+                    f"❌ موجودی کافی نداری! حداقل {MIN_WITHDRAWAL:,} تومان نیازه.\n"
+                    "با دعوت دوستان و چرخوندن گردونه، موجودیتو افزایش بده!",
+                    reply_markup=chat_menu()
+                )
             else:
-                await update.message.reply_text(msg, reply_markup=chat_menu())
+                await update.message.reply_text(
+                    f"💰 موجودی شما: {balance:,} تومان\n"
+                    f"🎡 تعداد چرخش‌های رایگان: {spins}\n\n"
+                    "📝 برای برداشت، می‌تونی درخواست بدی!\n"
+                    "با دعوت دوستان و چرخوندن گردونه، موجودیتو افزایش بده!",
+                    reply_markup=withdrawal_menu()
+                )
 
         elif text == "🏆 پر درآمد ها":
             with get_db_connection() as conn:
@@ -623,7 +635,7 @@ async def handle_messages(update: Update, context: ContextTypes):
             )
 
         elif text == "📢 دعوت دوستان":
-            invite_link = f"https://t.me/charkhoon_bot?start={user_id}"
+            invite_link = f"https://t.me/Charkhoun_bot?start={user_id}"
             await update.message.reply_text(
                 f"📢 لینک دعوت اختصاصی شما:\n{invite_link}\n\n"
                 "دوستاتو دعوت کن و با هر دعوت موفق، یه چرخش رایگان بگیر! 🚀",
