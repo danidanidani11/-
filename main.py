@@ -16,6 +16,7 @@ from tenacity import retry, stop_after_attempt, wait_fixed
 from dotenv import load_dotenv
 from datetime import datetime
 import asyncio
+import tempfile
 
 # تنظیم لاگ‌ها برای دیباگ بهتر
 logging.basicConfig(
@@ -202,13 +203,19 @@ async def backup_db(update: Update, context: ContextTypes):
             "users": [dict(zip([desc[0] for desc in cursor.description], row)) for row in users],
             "top_winners": [dict(zip([desc[0] for desc in cursor.description], row)) for row in top_winners]
         }
-        backup_json = json.dumps(backup_data, ensure_ascii=False, default=str)
-        await context.bot.send_message(
-            ADMIN_ID,
-            f"✅ بکاپ دیتابیس:\n```json\n{backup_json}\n```",
-            parse_mode="Markdown"
-        )
-        logger.info("بکاپ دیتابیس با موفقیت برای ادمین ارسال شد")
+        backup_file = f"/tmp/backup_{int(time.time())}.json"
+        with open(backup_file, "w", encoding="utf-8") as f:
+            json.dump(backup_data, f, ensure_ascii=False, default=str)
+        
+        with open(backup_file, "rb") as f:
+            await context.bot.send_document(
+                ADMIN_ID,
+                document=f,
+                filename=f"backup_{int(time.time())}.json",
+                caption="✅ فایل بکاپ دیتابیس"
+            )
+        logger.info("فایل بکاپ دیتابیس با موفقیت برای ادمین ارسال شد")
+        await update.message.reply_text("✅ بکاپ دیتابیس با موفقیت ارسال شد.", reply_markup=chat_menu())
     except Exception as e:
         logger.error(f"خطا در backup_db: {str(e)}")
         await update.message.reply_text(f"❌ خطا در ایجاد بکاپ: {str(e)}", reply_markup=chat_menu())
@@ -462,7 +469,7 @@ async def callback_handler(update: Update, context: ContextTypes):
                 f"💰 موجودی شما: {balance:,} تومان\n"
                 f"🎡 تعداد چرخش‌های رایگان: {spins}\n\n"
                 "📝 برای برداشت، موجودی شما باید حداقل ۲,۰۰۰,۰۰۰ تومان باشه.\n"
-                "با چرخوندن گردونه یا دعوت دوستان، موجودیتو افزایش بده!"
+                "با دعوت دوستان و چرخوندن گردونه، موجودیتو افزایش بده!"
             )
             if balance >= MIN_WITHDRAWAL:
                 await query.message.reply_text(msg, reply_markup=withdrawal_menu())
@@ -525,7 +532,7 @@ async def callback_handler(update: Update, context: ContextTypes):
                 f"💰 موجودی: {balance:,} تومان\n"
                 f"👥 دعوت‌های موفق: {invites} نفر\n"
                 f"💸 درآمد کل: {total_earnings:,} تومان\n\n"
-                f"با دعوت دوستان، چرخش‌های رایگان بیشتری بگیر!",
+                "با دعوت دوستان و چرخوندن گردونه، موجودیتو افزایش بده!",
                 reply_markup=chat_menu()
             )
 
@@ -584,7 +591,7 @@ async def handle_messages(update: Update, context: ContextTypes):
                 f"💰 موجودی شما: {balance:,} تومان\n"
                 f"🎡 تعداد چرخش‌های رایگان: {spins}\n\n"
                 "📝 برای برداشت، موجودی شما باید حداقل ۲,۰۰۰,۰۰۰ تومان باشه.\n"
-                "با چرخوندن گردونه یا دعوت دوستان، موجودیتو افزایش بده!"
+                "با دعوت دوستان و چرخوندن گردونه، موجودیتو افزایش بده!"
             )
             if balance >= MIN_WITHDRAWAL:
                 await update.message.reply_text(msg, reply_markup=withdrawal_menu())
@@ -611,7 +618,7 @@ async def handle_messages(update: Update, context: ContextTypes):
                 f"💰 موجودی: {balance:,} تومان\n"
                 f"👥 دعوت‌های موفق: {invites} نفر\n"
                 f"💸 درآمد کل: {total_earnings:,} تومان\n\n"
-                "با دعوت دوستان، چرخش‌های رایگان بیشتری بگیر!",
+                "با دعوت دوستان و چرخوندن گردونه، موجودیتو افزایش بده!",
                 reply_markup=chat_menu()
             )
 
