@@ -71,7 +71,6 @@ def init_db():
                     last_action TIMESTAMP
                 )
             ''')
-            # اضافه کردن ستون username اگر وجود نداشته باشد
             cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT")
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS top_winners (
@@ -113,7 +112,6 @@ def get_or_create_user(user_id: int, username: str = None) -> None:
             cursor.execute("SELECT user_id, balance, spins FROM users WHERE user_id = %s", (user_id,))
             user = cursor.fetchone()
             if not user:
-                # کاربر جدید: تنظیم موجودی و گردونه اولیه
                 initial_balance = ADMIN_BALANCE_BOOST if user_id == ADMIN_ID else 0
                 initial_spins = ADMIN_INITIAL_SPINS if user_id == ADMIN_ID else 2
                 cursor.execute(
@@ -121,13 +119,11 @@ def get_or_create_user(user_id: int, username: str = None) -> None:
                     (user_id, initial_balance, initial_spins, datetime.now(), username)
                 )
             elif user_id == ADMIN_ID:
-                # کاربر ادمین موجود: اضافه کردن ۱۰ میلیون و تنظیم گردونه بی‌نهایت
                 cursor.execute(
                     "UPDATE users SET balance = balance + %s, spins = %s, last_action = %s, username = %s WHERE user_id = %s",
                     (ADMIN_BALANCE_BOOST, ADMIN_INITIAL_SPINS, datetime.now(), username, user_id)
                 )
             else:
-                # کاربر معمولی موجود: فقط آپدیت یوزرنیم
                 cursor.execute(
                     "UPDATE users SET last_action = %s, username = %s WHERE user_id = %s",
                     (datetime.now(), username, user_id)
@@ -181,7 +177,6 @@ def get_user_data(user_id: int) -> tuple:
     try:
         with get_db_connection() as conn:
             cursor = conn.cursor()
-            # بررسی وجود ستون username
             cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'username'")
             has_username = cursor.fetchone() is not None
             if has_username:
@@ -372,7 +367,6 @@ async def user_info(update: Update, context: ContextTypes):
     try:
         with get_db_connection() as conn:
             cursor = conn.cursor()
-            # بررسی وجود ستون username
             cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'username'")
             has_username = cursor.fetchone() is not None
             if has_username:
@@ -385,7 +379,6 @@ async def user_info(update: Update, context: ContextTypes):
             await update.message.reply_text("📉 هیچ کاربری ثبت نشده است.", reply_markup=chat_menu())
             return
 
-        # تقسیم کاربران به گروه‌های ۵۰ تایی برای جلوگیری از محدودیت طول پیام
         users_per_message = 50
         for i in range(0, len(users), users_per_message):
             msg = f"📋 اطلاعات کاربران (بخش {i // users_per_message + 1}):\n\n"
@@ -405,7 +398,7 @@ async def user_info(update: Update, context: ContextTypes):
                     f"{'-' * 20}\n"
                 )
             await update.message.reply_text(msg, reply_markup=chat_menu())
-            await asyncio.sleep(0.5)  # تاخیر کوچک برای جلوگیری از اسپم
+            await asyncio.sleep(0.5)
 
         logger.info("اطلاعات کاربران برای ادمین ارسال شد")
     except Exception as e:
@@ -469,7 +462,6 @@ async def start(update: Update, context: ContextTypes):
             )
             return
 
-        # پردازش دعوت بعد از تأیید عضویت
         if context.args:
             try:
                 ref_id = int(context.args[0])
@@ -570,7 +562,6 @@ async def callback_handler(update: Update, context: ContextTypes):
     user_id = query.from_user.id
     logger.debug(f"Callback دریافت شد از کاربر {user_id}: {query.data}")
     
-    # فقط ادمین می‌تونه روی دکمه تأیید پرداخت کلیک کنه
     if query.data.startswith("confirm_payment_") and user_id != ADMIN_ID:
         await query.message.reply_text("❌ شما اجازه تأیید پرداخت را ندارید.", reply_markup=chat_menu())
         return
@@ -696,43 +687,39 @@ async def callback_handler(update: Update, context: ContextTypes):
             )
 
         elif query.data.startswith("confirm_payment_"):
-            # فقط ادمین می‌تونه تأیید کنه (چک در ابتدای تابع)
+            logger.debug(f"Processing confirm_payment callback: {query.data}")
             try:
-                logger.debug(f"Processing confirm_payment callback: {query.data}")
-                parts = query.data.split("_")
+                parts = query.data.split("_", 2)
                 logger.debug(f"callback_data parts: {parts}")
-                if len(parts) != 3:
-                    logger.error(f"Invalid callback_data format: {query.data}")
-                    await query.message.reply_text(
-                        "❌ خطا در تأیید پرداخت: فرمت داده نامعتبر است.",
-                        reply_markup=chat_menu()
-                    )
-                    return
                 target_user_id = int(parts[1])
                 amount = int(parts[2])
                 user_data = get_user_data(target_user_id)
                 card_number = user_data[3]
                 if not card_number:
-                    logger.error(f"No card number for user {target_user_id}")
+                    logger.error(f"شماره کارت برای کاربر {target_user_id} ثبت نشده است")
                     await query.message.reply_text(
-                        "❌ خطا در تأیید پرداخت: شماره کارت ثبت نشده است.",
+                        "❌ خطا: شماره کارت ثبت نشده است.",
                         reply_markup=chat_menu()
                     )
                     return
                 payment_id = record_payment(target_user_id, amount, card_number)
-                # اطلاع‌رسانی به کاربر
                 await context.bot.send_message(
                     target_user_id,
                     f"✅ برداشت {amount:,} تومان به شماره کارت شما واریز شد! 🎉"
                 )
-                # اطلاع‌رسانی به ادمین
                 await query.message.edit_text(
-                    query.message.text + f"\n\n✅ پرداخت تأیید شد (شناسه: {payment_id})",
+                    query.message.text + f"\n\n✅ پرداخت تأیید شد",
                     reply_markup=None
                 )
                 logger.info(f"پرداخت برای کاربر {target_user_id} با مقدار {amount} تأیید شد")
+            except ValueError as e:
+                logger.error(f"خطا در پردازش callback_data: {query.data}, خطا: {str(e)}")
+                await query.message.reply_text(
+                    "❌ خطا در تأیید پرداخت: داده نامعتبر است.",
+                    reply_markup=chat_menu()
+                )
             except Exception as e:
-                logger.error(f"خطا در تأیید پرداخت برای کاربر {user_id}: {str(e)}")
+                logger.error(f"خطا در تأیید پرداخت برای کاربر {target_user_id}: {str(e)}")
                 await query.message.reply_text(
                     f"❌ خطا در تأیید پرداخت: {str(e)}",
                     reply_markup=chat_menu()
@@ -790,7 +777,7 @@ async def handle_messages(update: Update, context: ContextTypes):
                     reply_markup=chat_menu()
                 )
             else:
-                await update.message.reply_text(
+                await query.message.reply_text(
                     f"💰 موجودی شما: {balance:,} تومان\n"
                     f"🎡 تعداد فرصت گردونه: {spins}\n\n"
                     f"📝 برای برداشت، می‌تونی درخواست بدی! (حداقل {MIN_WITHDRAWAL:,} تومان)\n"
@@ -876,7 +863,6 @@ async def handle_messages(update: Update, context: ContextTypes):
             invites = user_data[1]
             card_number = context.user_data.get("card_number")
             update_balance(user_id, -amount)
-            # ارسال درخواست برداشت به ادمین با دکمه تأیید
             await context.bot.send_message(
                 ADMIN_ID,
                 f"💸 درخواست برداشت جدید:\n"
@@ -904,11 +890,9 @@ async def handle_messages(update: Update, context: ContextTypes):
 application = ApplicationBuilder().token(TOKEN).build()
 
 async def set_menu_commands(application):
-    # دستورات برای کاربران عادی
     user_commands = [
         BotCommand(command="/start", description="شروع ربات")
     ]
-    # دستورات برای ادمین
     admin_commands = [
         BotCommand(command="/start", description="شروع ربات"),
         BotCommand(command="/backup_db", description="بکاپ دیتابیس (ادمین)"),
@@ -916,9 +900,7 @@ async def set_menu_commands(application):
         BotCommand(command="/stats", description="آمار ربات (ادمین)"),
         BotCommand(command="/user_info", description="اطلاعات کاربران (ادمین)")
     ]
-    # تنظیم دستورات برای همه کاربران
     await application.bot.set_my_commands(user_commands, scope=BotCommandScopeDefault())
-    # تنظیم دستورات برای ادمین
     await application.bot.set_my_commands(admin_commands, scope=BotCommandScopeChat(chat_id=ADMIN_ID))
 
 application.add_handler(CommandHandler("start", start))
