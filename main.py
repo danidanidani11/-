@@ -328,7 +328,7 @@ async def stats(update: Update, context: ContextTypes):
 async def user_info(update: Update, context: ContextTypes):
     user_id = update.effective_user.id
     if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ شما اجازه انجام این عملیات را ندارید.", reply_markup=.WraparoundMenu())
+        await update.message.reply_text("❌ شما اجازه انجام این عملیات را ندارید.", reply_markup=chat_menu())
         return
 
     try:
@@ -594,7 +594,7 @@ async def callback_handler(update: Update, context: ContextTypes):
                 await query.message.reply_text(
                     f"💰 موجودی شما: {balance:,} تومان\n"
                     f"🎡 تعداد فرصت گردونه: {spins}\n\n"
-                    "📝 برای برداشت، می‌تونی درخواست بدی!\n"
+                    f"📝 برای برداشت، می‌تونی درخواست بدی!\n"
                     "با دعوت دوستان و چرخوندن گردونه، موجودیتو افزایش بده!",
                     reply_markup=withdrawal_menu()
                 )
