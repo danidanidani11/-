@@ -81,7 +81,6 @@ def init_db():
                     last_win TIMESTAMP
                 )
             ''')
-            # جدول جدید برای ثبت پرداخت‌های تأییدشده
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS payments (
                     payment_id SERIAL PRIMARY KEY,
@@ -89,6 +88,15 @@ def init_db():
                     amount INTEGER,
                     card_number TEXT,
                     confirmed_at TIMESTAMP
+                )
+            ''')
+            # جدول جدید برای ثبت دعوت‌ها
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS invitations (
+                    inviter_id BIGINT,
+                    invitee_id BIGINT,
+                    invited_at TIMESTAMP,
+                    PRIMARY KEY (inviter_id, invitee_id)
                 )
             ''')
             conn.commit()
@@ -220,6 +228,33 @@ def record_payment(user_id: int, amount: int, card_number: str) -> int:
         logger.error(f"خطا در record_payment برای کاربر {user_id}: {str(e)}")
         raise
 
+def check_invitation(inviter_id: int, invitee_id: int) -> bool:
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT 1 FROM invitations WHERE inviter_id = %s AND invitee_id = %s",
+                (inviter_id, invitee_id)
+            )
+            return cursor.fetchone() is not None
+    except Exception as e:
+        logger.error(f"خطا در check_invitation برای inviter {inviter_id} و invitee {invitee_id}: {str(e)}")
+        raise
+
+def record_invitation(inviter_id: int, invitee_id: int) -> None:
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO invitations (inviter_id, invitee_id, invited_at) VALUES (%s, %s, %s)",
+                (inviter_id, invitee_id, datetime.now())
+            )
+            conn.commit()
+            logger.info(f"دعوت از {inviter_id} برای {invitee_id} ثبت شد")
+    except Exception as e:
+        logger.error(f"خطا در record_invitation برای inviter {inviter_id} و invitee {invitee_id}: {str(e)}")
+        raise
+
 @retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
 async def check_channel_membership(user_id: int, context: ContextTypes) -> bool:
     try:
@@ -255,11 +290,14 @@ async def backup_db(update: Update, context: ContextTypes):
             top_winners = cursor.fetchall()
             cursor.execute("SELECT * FROM payments")
             payments = cursor.fetchall()
+            cursor.execute("SELECT * FROM invitations")
+            invitations = cursor.fetchall()
 
         backup_data = {
             "users": [dict(zip([desc[0] for desc in cursor.description], row)) for row in users],
             "top_winners": [dict(zip([desc[0] for desc in cursor.description], row)) for row in top_winners],
-            "payments": [dict(zip([desc[0] for desc in cursor.description], row)) for row in payments]
+            "payments": [dict(zip([desc[0] for desc in cursor.description], row)) for row in payments],
+            "invitations": [dict(zip([desc[0] for desc in cursor.description], row)) for row in invitations]
         }
         backup_file = f"/tmp/backup_{int(time.time())}.json"
         with open(backup_file, "w", encoding="utf-8") as f:
@@ -290,6 +328,7 @@ async def clear_db(update: Update, context: ContextTypes):
             cursor.execute("DELETE FROM users")
             cursor.execute("DELETE FROM top_winners")
             cursor.execute("DELETE FROM payments")
+            cursor.execute("DELETE FROM invitations")
             conn.commit()
         await update.message.reply_text("✅ دیتابیس با موفقیت پاک شد.", reply_markup=chat_menu())
     except Exception as e:
@@ -433,45 +472,33 @@ async def start(update: Update, context: ContextTypes):
 
         # پردازش دعوت بعد از تأیید عضویت
         if context.args:
-            ref_id = context.args[0]
             try:
-                ref_id = int(ref_id)
-                with get_db_connection() as conn:
-                    cursor = conn.cursor()
-                    cursor.execute("SELECT user_id FROM users WHERE user_id = %s", (ref_id,))
-                    referrer = cursor.fetchone()
-                    if referrer and referrer[0] != user.id:
-                        update_spins(ref_id, INVITE_REWARD)
-                        cursor.execute("UPDATE users SET invites = invites + 1 WHERE user_id = %s", (ref_id,))
-                        conn.commit()
-                        logger.info(f"کاربر {user.id} از طریق دعوت {ref_id} ثبت شد")
-                        await context.bot.send_message(
-                            ref_id,
-                            "🎉 یه نفر با لینک دعوتت به گردونه شانس پیوست! یه فرصت گردونه برات اضافه شد! 🚀"
-                        )
-                        await update.message.reply_text(
-                            "🎉 خوش اومدی به گردونه شانس!\n\n"
-                            "برای شروع، یکی از گزینه‌های زیر رو انتخاب کن:",
-                            reply_markup=chat_menu()
-                        )
-                    else:
-                        await update.message.reply_text(
-                            "🎉 خوش اومدی به گردونه شانس!\n\n"
-                            "برای شروع، یکی از گزینه‌های زیر رو انتخاب کن:",
-                            reply_markup=chat_menu()
-                        )
+                ref_id = int(context.args[0])
+                if ref_id != user.id and not check_invitation(ref_id, user.id):
+                    with get_db_connection() as conn:
+                        cursor = conn.cursor()
+                        cursor.execute("SELECT user_id FROM users WHERE user_id = %s", (ref_id,))
+                        referrer = cursor.fetchone()
+                        if referrer:
+                            update_spins(ref_id, INVITE_REWARD)
+                            cursor.execute("UPDATE users SET invites = invites + 1 WHERE user_id = %s", (ref_id,))
+                            record_invitation(ref_id, user.id)
+                            conn.commit()
+                            logger.info(f"کاربر {user.id} از طریق دعوت {ref_id} ثبت شد")
+                            await context.bot.send_message(
+                                ref_id,
+                                "🎉 یه نفر با لینک دعوتت به گردونه شانس پیوست! یه فرصت گردونه برات اضافه شد! 🚀"
+                            )
             except ValueError:
-                await update.message.reply_text(
-                    "🎉 خوش اومدی به گردونه شانس!\n\n"
-                    "برای شروع، یکی از گزینه‌های زیر رو انتخاب کن:",
-                    reply_markup=chat_menu()
-                )
-        else:
-            await update.message.reply_text(
-                "🎉 خوش اومدی به گردونه شانس!\n\n"
-                "برای شروع، یکی از گزینه‌های زیر رو انتخاب کن:",
-                reply_markup=chat_menu()
-            )
+                logger.warning(f"لینک دعوت نامعتبر برای کاربر {user.id}: {context.args[0]}")
+            except Exception as e:
+                logger.error(f"خطا در پردازش دعوت برای کاربر {user.id}: {str(e)}")
+
+        await update.message.reply_text(
+            "🎉 خوش اومدی به گردونه شانس!\n\n"
+            "برای شروع، یکی از گزینه‌های زیر رو انتخاب کن:",
+            reply_markup=chat_menu()
+        )
     except Exception as e:
         logger.error(f"خطا در پردازش /start برای کاربر {user.id}: {str(e)}")
         await update.message.reply_text(
@@ -672,11 +699,13 @@ async def callback_handler(update: Update, context: ContextTypes):
         elif query.data.startswith("confirm_payment_"):
             # فقط ادمین می‌تونه تأیید کنه (چک در ابتدای تابع)
             try:
-                parts = query.data.split("_", 2)  # محدود کردن به حداکثر ۳ بخش
+                parts = query.data.split("_")
                 logger.debug(f"callback_data parts: {parts}")  # لاگ برای دیباگ
-                if len(parts) != 3 or parts[0] != "confirm_payment":
+                if len(parts) != 3:
                     raise ValueError(f"فرمت callback_data نامعتبر است: {query.data}")
-                _, target_user_id, amount = parts
+                prefix, target_user_id, amount = parts
+                if prefix != "confirm_payment":
+                    raise ValueError(f"پیشوند callback_data نامعتبر است: {prefix}")
                 try:
                     target_user_id = int(target_user_id)
                     amount = int(amount)
@@ -693,7 +722,7 @@ async def callback_handler(update: Update, context: ContextTypes):
                     target_user_id,
                     f"✅ برداشت {amount:,} تومان به شماره کارت شما واریز شد! 🎉"
                 )
-                # ویرایش پیام ادمین برای غیرفعال کردن دکمه
+                # اطلاع‌رسانی به ادمین
                 await query.message.edit_text(
                     query.message.text + f"\n\n✅ پرداخت تأیید شد (شناسه: {payment_id})",
                     reply_markup=None
