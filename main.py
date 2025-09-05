@@ -383,7 +383,7 @@ async def send_new_user_notification(user_id: int, username: str, context: Conte
             f"📛 یوزرنیم: @{username if username else 'بدون یوزرنیم'}\n"
             f"📅 تاریخ: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
         )
-        logger.info(f"اطلاع‌رسانی کاربر جدید برای ادمین ارسال شد: {user_id}")
+        logger.info(f"اطلاع رسانی کاربر جدید برای ادمین ارسال شد: {user_id}")
     except Exception as e:
         logger.error(f"خطا در ارسال اطلاع‌رسانی کاربر جدید: {str(e)}")
 
@@ -461,27 +461,17 @@ async def stats(update: Update, context: ContextTypes):
     try:
         with get_db_connection() as conn:
             cursor = conn.cursor()
-            
-            # تعداد کل کاربران
             cursor.execute("SELECT COUNT(*) FROM users")
             total_users = cursor.fetchone()[0] or 0
-            
-            # تعداد کل دعوت‌ها
             cursor.execute("SELECT COALESCE(SUM(invites), 0) FROM users")
             total_invites = cursor.fetchone()[0] or 0
-            
-            # مجموع درآمد کاربران
             cursor.execute("SELECT COALESCE(SUM(total_earnings), 0) FROM users")
             total_earnings = cursor.fetchone()[0] or 0
-            
-            # تعداد پرداخت‌های تأییدشده
             cursor.execute("SELECT COUNT(*) FROM payments")
             total_payments = cursor.fetchone()[0] or 0
-            
-            # تعداد کانال‌های اجباری
             cursor.execute("SELECT COUNT(*) FROM channels")
             total_channels = cursor.fetchone()[0] or 0
-
+            
         await update.message.reply_text(
             f"📊 آمار ربات:\n\n"
             f"👥 تعداد کل کاربران: {total_users:,}\n"
@@ -490,9 +480,8 @@ async def stats(update: Update, context: ContextTypes):
             f"💸 تعداد پرداخت‌های تأییدشده: {total_payments:,}\n"
             f"📺 تعداد کانال‌های اجباری: {total_channels}"
         )
-        logger.info(f"آمار ربات برای ادمین {user_id} ارسال شد")
     except Exception as e:
-        logger.error(f"خطا در stats برای کاربر {user_id}: {str(e)}")
+        logger.error(f"خطا در stats: {str(e)}")
         await update.message.reply_text(f"❌ خطا در دریافت آمار: {str(e)}")
 
 async def user_info(update: Update, context: ContextTypes):
@@ -637,9 +626,6 @@ async def start(update: Update, context: ContextTypes):
                     "👋 سلام! به ربات خوش آمدید!",
                     reply_markup=chat_menu()
                 )
-                if is_new_user:
-                    await send_new_user_notification(user.id, user.username, context)
-                    mark_user_as_old(user.id)
             return
     except Exception as e:
         logger.error(f"خطا در بررسی عضویت برای کاربر {user.id}: {str(e)}")
@@ -649,7 +635,12 @@ async def start(update: Update, context: ContextTypes):
         )
         return
 
-    # پردازش لینک دعوت پس از تأیید عضویت (اگر کانال اجباری وجود ندارد)
+    # ارسال پیام به ادمین فقط برای کاربران جدید
+    if is_new_user:
+        await send_new_user_notification(user.id, user.username, context)
+        mark_user_as_old(user.id)
+
+    # پردازش لینک دعوت پس از تأیید عضویت
     try:
         if context.args:
             try:
@@ -692,10 +683,6 @@ async def start(update: Update, context: ContextTypes):
                         "🎉 یه نفر با لینک دعوتت به گردونه شانس پیوست! یه فرصت گردونه برات اضافه شد! 🚀"
                     )
             clear_pending_ref(user.id)
-
-        if is_new_user:
-            await send_new_user_notification(user.id, user.username, context)
-            mark_user_as_old(user.id)
 
         await update.message.reply_text(
             "🎉 خوش اومدی به گردونه شانس!\n\n"
@@ -804,7 +791,7 @@ async def callback_handler(update: Update, context: ContextTypes):
                     )
                 return
             
-            # ارسال پیام به ادمین فقط برای کاربران جدید پس از تأیید عضویت
+            # ارسال پیام به ادمین فقط برای کاربران جدید
             if is_new_user:
                 await send_new_user_notification(user_id, query.from_user.username, context)
                 mark_user_as_old(user_id)
