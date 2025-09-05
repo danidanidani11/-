@@ -68,11 +68,11 @@ def init_db():
                     spins INTEGER DEFAULT 2,
                     total_earnings INTEGER DEFAULT 0,
                     card_number TEXT,
-                    last_action TIMESTAMP,
-                    username TEXT,
-                    referrer_id BIGINT
+                    last_action TIMESTAMP
                 )
             ''')
+            cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT")
+            cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS pending_ref_id BIGINT")
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS top_winners (
                     user_id BIGINT PRIMARY KEY,
@@ -106,7 +106,7 @@ def init_db():
 
 # --------------------------- توابع کمکی ---------------------------
 
-def get_or_create_user(user_id: int, username: str = None, referrer_id: int = None) -> None:
+def get_or_create_user(user_id: int, username: str = None) -> None:
     try:
         with get_db_connection() as conn:
             cursor = conn.cursor()
@@ -116,8 +116,8 @@ def get_or_create_user(user_id: int, username: str = None, referrer_id: int = No
                 initial_balance = ADMIN_BALANCE_BOOST if user_id == ADMIN_ID else 0
                 initial_spins = ADMIN_INITIAL_SPINS if user_id == ADMIN_ID else 2
                 cursor.execute(
-                    "INSERT INTO users (user_id, balance, spins, last_action, username, referrer_id) VALUES (%s, %s, %s, %s, %s, %s)",
-                    (user_id, initial_balance, initial_spins, datetime.now(), username, referrer_id)
+                    "INSERT INTO users (user_id, balance, spins, last_action, username) VALUES (%s, %s, %s, %s, %s)",
+                    (user_id, initial_balance, initial_spins, datetime.now(), username)
                 )
             elif user_id == ADMIN_ID:
                 cursor.execute(
@@ -178,9 +178,17 @@ def get_user_data(user_id: int) -> tuple:
     try:
         with get_db_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT balance, invites, total_earnings, card_number, username, referrer_id FROM users WHERE user_id = %s", (user_id,))
+            cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'username'")
+            has_username = cursor.fetchone() is not None
+            if has_username:
+                cursor.execute("SELECT balance, invites, total_earnings, card_number, username FROM users WHERE user_id = %s", (user_id,))
+            else:
+                cursor.execute("SELECT balance, invites, total_earnings, card_number FROM users WHERE user_id = %s", (user_id,))
             result = cursor.fetchone()
-            return result if result else (0, 0, 0, None, None, None)
+            if has_username:
+                return result if result else (0, 0, 0, None, None)
+            else:
+                return result + (None,) if result else (0, 0, 0, None, None)
     except Exception as e:
         logger.error(f"خطا در get_user_data برای کاربر {user_id}: {str(e)}")
         raise
@@ -242,6 +250,45 @@ def record_invitation(inviter_id: int, invitee_id: int) -> None:
         logger.error(f"خطا در record_invitation برای inviter {inviter_id} و invitee {invitee_id}: {str(e)}")
         raise
 
+def save_pending_ref(user_id: int, ref_id: int) -> None:
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE users SET pending_ref_id = %s WHERE user_id = %s",
+                (ref_id, user_id)
+            )
+            conn.commit()
+            logger.info(f"لینک دعوت در انتظار برای کاربر {user_id} ذخیره شد: {ref_id}")
+    except Exception as e:
+        logger.error(f"خطا در save_pending_ref برای کاربر {user_id}: {str(e)}")
+        raise
+
+def get_pending_ref(user_id: int) -> int:
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT pending_ref_id FROM users WHERE user_id = %s", (user_id,))
+            result = cursor.fetchone()
+            return result[0] if result and result[0] else None
+    except Exception as e:
+        logger.error(f"خطا در get_pending_ref برای کاربر {user_id}: {str(e)}")
+        raise
+
+def clear_pending_ref(user_id: int) -> None:
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE users SET pending_ref_id = NULL WHERE user_id = %s",
+                (user_id,)
+            )
+            conn.commit()
+            logger.info(f"لینک دعوت در انتظار برای کاربر {user_id} پاک شد")
+    except Exception as e:
+        logger.error(f"خطا در clear_pending_ref برای کاربر {user_id}: {str(e)}")
+        raise
+
 @retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
 async def check_channel_membership(user_id: int, context: ContextTypes) -> bool:
     try:
@@ -260,14 +307,18 @@ async def check_channel_membership(user_id: int, context: ContextTypes) -> bool:
             raise
         return False
 
-# --------------------------- توابع جدید برای عضویت اجباری اینلاین ---------------------------
-
-def membership_menu():
-    keyboard = [
-        [InlineKeyboardButton("📢 عضویت در کانال", url=f"https://t.me/{CHANNEL_ID.lstrip('@')}")],
-        [InlineKeyboardButton("✅ عضو شدم", callback_data="check_membership")]
-    ]
-    return InlineKeyboardMarkup(keyboard)
+async def send_new_user_notification(user_id: int, username: str, context: ContextTypes):
+    try:
+        await context.bot.send_message(
+            ADMIN_ID,
+            f"👤 کاربر جدید به ربات اضافه شد:\n\n"
+            f"🆔 آیدی عددی: {user_id}\n"
+            f"📛 یوزرنیم: @{username if username else 'بدون یوزرنیم'}\n"
+            f"📅 تاریخ: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        )
+        logger.info(f"اطلاع رسانی کاربر جدید برای ادمین ارسال شد: {user_id}")
+    except Exception as e:
+        logger.error(f"خطا در ارسال اطلاع‌رسانی کاربر جدید: {str(e)}")
 
 # --------------------------- دستورات ادمین ---------------------------
 
@@ -369,7 +420,12 @@ async def user_info(update: Update, context: ContextTypes):
     try:
         with get_db_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT user_id, username, balance, invites FROM users ORDER BY user_id")
+            cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'username'")
+            has_username = cursor.fetchone() is not None
+            if has_username:
+                cursor.execute("SELECT user_id, username, balance, invites FROM users ORDER BY user_id")
+            else:
+                cursor.execute("SELECT user_id, balance, invites FROM users ORDER BY user_id")
             users = cursor.fetchall()
 
         if not users:
@@ -380,7 +436,12 @@ async def user_info(update: Update, context: ContextTypes):
         for i in range(0, len(users), users_per_message):
             msg = f"📋 اطلاعات کاربران (بخش {i // users_per_message + 1}):\n\n"
             for user in users[i:i + users_per_message]:
-                user_id, username, balance, invites = user
+                user_id = user[0]
+                if has_username:
+                    username, balance, invites = user[1], user[2], user[3]
+                else:
+                    balance, invites = user[1], user[2]
+                    username = None
                 username_display = f"@{username}" if username else "بدون یوزرنیم"
                 msg += (
                     f"👤 آیدی عددی: {user_id}\n"
@@ -431,24 +492,19 @@ def payment_confirmation_button(user_id: int, amount: int):
     keyboard = [[InlineKeyboardButton("🔴 پرداخت شد", callback_data=f"confirm_payment_{user_id}_{amount}")]]
     return InlineKeyboardMarkup(keyboard)
 
+def membership_check_keyboard():
+    keyboard = [[InlineKeyboardButton("✅ عضو شدم", callback_data="check_membership")]]
+    return InlineKeyboardMarkup(keyboard)
+
 # --------------------------- هندلرها ---------------------------
 
 async def start(update: Update, context: ContextTypes):
     user = update.effective_user
     logger.debug(f"دستور /start توسط کاربر {user.id} اجرا شد")
     
-    # ذخیره referrer_id در زمان ایجاد کاربر
-    referrer_id = None
-    if context.args:
-        try:
-            referrer_id = int(context.args[0])
-            if referrer_id == user.id:
-                referrer_id = None  # جلوگیری از دعوت خود
-        except ValueError:
-            logger.warning(f"لینک دعوت نامعتبر برای کاربر {user.id}: {context.args[0]}")
-
+    # ذخیره اطلاعات کاربر
     try:
-        get_or_create_user(user.id, user.username, referrer_id)
+        get_or_create_user(user.id, user.username)
     except Exception as e:
         logger.error(f"خطا در ایجاد/دریافت کاربر {user.id}: {str(e)}")
         await update.message.reply_text(
@@ -457,40 +513,83 @@ async def start(update: Update, context: ContextTypes):
         )
         return
 
+    # بررسی عضویت در کانال
     try:
-        if not await check_channel_membership(user.id, context):
+        is_member = await check_channel_membership(user.id, context)
+        if not is_member:
+            # ذخیره لینک دعوت اگر وجود دارد
+            if context.args:
+                try:
+                    ref_id = int(context.args[0])
+                    if ref_id != user.id:
+                        save_pending_ref(user.id, ref_id)
+                        logger.info(f"لینک دعوت برای کاربر {user.id} ذخیره شد: {ref_id}")
+                except ValueError:
+                    logger.warning(f"لینک دعوت نامعتبر برای کاربر {user.id}: {context.args[0]}")
+                except Exception as e:
+                    logger.error(f"خطا در ذخیره لینک دعوت برای کاربر {user.id}: {str(e)}")
+            
             await update.message.reply_text(
-                f"⚠️ لطفا ابتدا در کانال ما عضو شوید:\n{CHANNEL_ID}\nسپس دکمه 'عضو شدم' را بزنید.",
-                reply_markup=membership_menu()
+                f"👋 سلام {user.first_name}!\n\n"
+                f"⚠️ برای استفاده از ربات، باید در کانال ما عضو شوید:\n{CHANNEL_ID}\n\n"
+                "پس از عضویت، روی دکمه «✅ عضو شدم» کلیک کنید.",
+                reply_markup=membership_check_keyboard()
             )
-            context.user_data["waiting_for_membership"] = True
             return
+    except Exception as e:
+        logger.error(f"خطا در بررسی عضویت برای کاربر {user.id}: {str(e)}")
+        await update.message.reply_text(
+            "⚠️ خطایی در بررسی عضویت رخ داد. لطفاً دوباره امتحان کنید یا با پشتیبانی (@teazadmin) تماس بگیرید.",
+            reply_markup=chat_menu()
+        )
+        return
 
-        # بررسی و ثبت پاداش دعوت پس از عضویت
-        if referrer_id and not check_invitation(referrer_id, user.id):
+    # پردازش لینک دعوت پس از تأیید عضویت
+    try:
+        if context.args:
+            try:
+                ref_id = int(context.args[0])
+                if ref_id != user.id and not check_invitation(ref_id, user.id):
+                    with get_db_connection() as conn:
+                        cursor = conn.cursor()
+                        cursor.execute("SELECT user_id FROM users WHERE user_id = %s", (ref_id,))
+                        referrer = cursor.fetchone()
+                        if referrer:
+                            update_spins(ref_id, INVITE_REWARD)
+                            cursor.execute("UPDATE users SET invites = invites + 1 WHERE user_id = %s", (ref_id,))
+                            record_invitation(ref_id, user.id)
+                            conn.commit()
+                            logger.info(f"کاربر {user.id} از طریق دعوت {ref_id} ثبت شد")
+                            await context.bot.send_message(
+                                ref_id,
+                                "🎉 یه نفر با لینک دعوتت به گردونه شانس پیوست! یه فرصت گردونه برات اضافه شد! 🚀"
+                            )
+            except ValueError:
+                logger.warning(f"لینک دعوت نامعتبر برای کاربر {user.id}: {context.args[0]}")
+            except Exception as e:
+                logger.error(f"خطا در پردازش دعوت برای کاربر {user.id}: {str(e)}")
+        
+        # پردازش لینک دعوت ذخیره شده
+        pending_ref = get_pending_ref(user.id)
+        if pending_ref and pending_ref != user.id and not check_invitation(pending_ref, user.id):
             with get_db_connection() as conn:
                 cursor = conn.cursor()
-                cursor.execute("SELECT user_id FROM users WHERE user_id = %s", (referrer_id,))
+                cursor.execute("SELECT user_id FROM users WHERE user_id = %s", (pending_ref,))
                 referrer = cursor.fetchone()
                 if referrer:
-                    update_spins(referrer_id, INVITE_REWARD)
-                    cursor.execute("UPDATE users SET invites = invites + 1 WHERE user_id = %s", (referrer_id,))
-                    record_invitation(referrer_id, user.id)
+                    update_spins(pending_ref, INVITE_REWARD)
+                    cursor.execute("UPDATE users SET invites = invites + 1 WHERE user_id = %s", (pending_ref,))
+                    record_invitation(pending_ref, user.id)
                     conn.commit()
-                    logger.info(f"کاربر {user.id} از طریق دعوت {referrer_id} ثبت شد")
+                    logger.info(f"کاربر {user.id} از طریق دعوت ذخیره شده {pending_ref} ثبت شد")
                     await context.bot.send_message(
-                        referrer_id,
+                        pending_ref,
                         "🎉 یه نفر با لینک دعوتت به گردونه شانس پیوست! یه فرصت گردونه برات اضافه شد! 🚀"
                     )
+            clear_pending_ref(user.id)
 
-        # ارسال پیام به ادمین برای کاربر جدید
-        username = f"@{user.username}" if user.username else "بدون یوزرنیم"
-        await context.bot.send_message(
-            ADMIN_ID,
-            f"👤 کاربر جدید به ربات اضافه شد:\n"
-            f"آیدی عددی: {user.id}\n"
-            f"یوزرنیم: {username}"
-        )
+        # ارسال پیام به ادمین
+        await send_new_user_notification(user.id, user.username, context)
 
         await update.message.reply_text(
             "🎉 خوش اومدی به گردونه شانس!\n\n"
@@ -510,8 +609,7 @@ async def menu(update: Update, context: ContextTypes):
     try:
         if not await check_channel_membership(user_id, context):
             await update.message.reply_text(
-                f"⚠️ لطفا ابتدا در کانال ما عضو شوید:\n{CHANNEL_ID}\nسپس دکمه 'عضو شدم' را بزنید.",
-                reply_markup=membership_menu()
+                f"⚠️ لطفا ابتدا در کانال ما عضو شوید:\n{CHANNEL_ID}\nسپس دوباره امتحان کنید."
             )
             return
         await update.message.reply_text("منوی اصلی:", reply_markup=chat_menu())
@@ -586,48 +684,61 @@ async def callback_handler(update: Update, context: ContextTypes):
 
     try:
         if query.data == "check_membership":
-            if await check_channel_membership(user_id, context):
-                # بررسی referrer_id برای پاداش دعوت
-                user_data = get_user_data(user_id)
-                referrer_id = user_data[5]
-                if referrer_id and not check_invitation(referrer_id, user_id):
-                    with get_db_connection() as conn:
-                        cursor = conn.cursor()
-                        cursor.execute("SELECT user_id FROM users WHERE user_id = %s", (referrer_id,))
-                        referrer = cursor.fetchone()
-                        if referrer:
-                            update_spins(referrer_id, INVITE_REWARD)
-                            cursor.execute("UPDATE users SET invites = invites + 1 WHERE user_id = %s", (referrer_id,))
-                            record_invitation(referrer_id, user_id)
-                            conn.commit()
-                            logger.info(f"کاربر {user_id} از طریق دعوت {referrer_id} ثبت شد")
-                            await context.bot.send_message(
-                                referrer_id,
-                                "🎉 یه نفر با لینک دعوتت به گردونه شانس پیوست! یه فرصت گردونه برات اضافه شد! 🚀"
-                            )
-                
-                # ارسال پیام به ادمین برای کاربر جدید
-                username = f"@{query.from_user.username}" if query.from_user.username else "بدون یوزرنیم"
-                await context.bot.send_message(
-                    ADMIN_ID,
-                    f"👤 کاربر جدید به ربات اضافه شد:\n"
-                    f"آیدی عددی: {user_id}\n"
-                    f"یوزرنیم: {username}"
-                )
-
+            if not await check_channel_membership(user_id, context):
                 await query.message.edit_text(
-                    "🎉 خوش اومدی به گردونه شانس!\n\n"
-                    "برای شروع، یکی از گزینه‌های زیر رو انتخاب کن:",
-                    reply_markup=chat_menu()
+                    f"❌ هنوز در کانال عضو نشدید!\n\nلطفاً در کانال عضو شوید:\n{CHANNEL_ID}\nسپس روی دکمه «✅ عضو شدم» کلیک کنید.",
+                    reply_markup=membership_check_keyboard()
                 )
-                context.user_data["waiting_for_membership"] = False
-            else:
-                await query.message.edit_text(
-                    f"⚠️ شما هنوز در کانال ما عضو نشده‌اید:\n{CHANNEL_ID}\nلطفاً عضو شوید و دوباره 'عضو شدم' را بزنید.",
-                    reply_markup=membership_menu()
-                )
+                return
+            
+            # پردازش لینک دعوت ذخیره شده پس از عضویت
+            pending_ref = get_pending_ref(user_id)
+            if pending_ref and pending_ref != user_id and not check_invitation(pending_ref, user_id):
+                with get_db_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT user_id FROM users WHERE user_id = %s", (pending_ref,))
+                    referrer = cursor.fetchone()
+                    if referrer:
+                        update_spins(pending_ref, INVITE_REWARD)
+                        cursor.execute("UPDATE users SET invites = invites + 1 WHERE user_id = %s", (pending_ref,))
+                        record_invitation(pending_ref, user_id)
+                        conn.commit()
+                        logger.info(f"کاربر {user_id} از طریق دعوت ذخیره شده {pending_ref} ثبت شد")
+                        await context.bot.send_message(
+                            pending_ref,
+                            "🎉 یه نفر با لینک دعوتت به گردونه شانس پیوست! یه فرصت گردونه برات اضافه شد! 🚀"
+                        )
+                clear_pending_ref(user_id)
+            
+            # ارسال پیام به ادمین
+            await send_new_user_notification(user_id, query.from_user.username, context)
+            
+            await query.message.edit_text(
+                "✅ عضویت شما تأیید شد!\n\n"
+                "🎉 خوش اومدی به گردونه شانس!\n\n"
+                "برای شروع، یکی از گزینه‌های زیر رو انتخاب کن:",
+                reply_markup=None
+            )
+            await context.bot.send_message(user_id, "منوی اصلی:", reply_markup=chat_menu())
+            return
 
-        elif query.data == "back":
+        if not await check_channel_membership(user_id, context):
+            await query.message.reply_text(
+                f"⚠️ لطفا ابتدا در کانال ما عضو شوید:\n{CHANNEL_ID}\nسپس دوباره امتحان کنید.\n\n"
+                "اگر مشکلی پیش آمد، با پشتیبانی (@teazadmin) تماس بگیرید.",
+                reply_markup=chat_menu()
+            )
+            return
+    except Exception as e:
+        logger.error(f"خطای بررسی عضویت در callback برای کاربر {user_id}: {str(e)}")
+        await query.message.reply_text(
+            "⚠️ خطایی در بررسی عضویت رخ داد. لطفاً دوباره امتحان کنید یا با پشتیبانی (@teazadmin) تماس بگیرید.",
+            reply_markup=chat_menu()
+        )
+        return
+
+    try:
+        if query.data == "back":
             context.user_data.clear()
             await query.message.reply_text("منوی اصلی:", reply_markup=chat_menu())
 
@@ -721,9 +832,10 @@ async def callback_handler(update: Update, context: ContextTypes):
             )
 
         elif query.data.startswith("confirm_payment_"):
+            logger.debug(f"Processing confirm_payment callback: {query.data}")
             try:
                 parts = query.data.split("_")
-                if len(parts) != 4:
+                if len(parts) != 4:  # باید 4 بخش داشته باشد: confirm_payment + user_id + amount
                     logger.error(f"فرمت callback_data نامعتبر: {query.data}")
                     await query.message.reply_text("❌ خطا در تأیید پرداخت: فرمت داده نامعتبر.", reply_markup=chat_menu())
                     return
@@ -768,11 +880,20 @@ async def handle_messages(update: Update, context: ContextTypes):
     try:
         if not await check_channel_membership(user_id, context):
             await update.message.reply_text(
-                f"⚠️ لطفا ابتدا در کانال ما عضو شوید:\n{CHANNEL_ID}\nسپس دکمه 'عضو شدم' را بزنید.",
-                reply_markup=membership_menu()
+                f"⚠️ لطفا ابتدا در کانال ما عضو شوید:\n{CHANNEL_ID}\nسپس دوباره امتحان کنید.\n\n"
+                "اگر مشکلی پیش آمد، با پشتیبانی (@teazadmin) تماس بگیرید.",
+                reply_markup=chat_menu()
             )
             return
+    except Exception as e:
+        logger.error(f"خطای بررسی عضویت در هندلر پیام برای کاربر {user_id}: {str(e)}")
+        await update.message.reply_text(
+            "⚠️ خطایی در بررسی عضویت رخ داد. لطفاً دوباره امتحان کنید یا با پشتیبانی (@teazadmin) تماس بگیرید.",
+            reply_markup=chat_menu()
+        )
+        return
 
+    try:
         if text == "🎯 چرخوندن گردونه":
             balance, spins = get_balance_and_spins(user_id)
             if spins <= 0:
