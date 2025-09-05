@@ -155,7 +155,7 @@ def get_or_create_user(user_id: int, username: str = None) -> tuple:
             return is_new
     except Exception as e:
         logger.error(f"خطا در get_or_create_user برای کاربر {user_id}: {str(e)}")
-        raise
+        return False
 
 def mark_user_as_old(user_id: int) -> None:
     try:
@@ -169,7 +169,6 @@ def mark_user_as_old(user_id: int) -> None:
             logger.info(f"کاربر {user_id} به عنوان کاربر قدیمی علامت گذاری شد")
     except Exception as e:
         logger.error(f"خطا در mark_user_as_old برای کاربر {user_id}: {str(e)}")
-        raise
 
 def update_balance(user_id: int, amount: int) -> None:
     try:
@@ -183,7 +182,6 @@ def update_balance(user_id: int, amount: int) -> None:
             logger.info(f"موجودی کاربر {user_id} آپدیت شد: {amount}")
     except Exception as e:
         logger.error(f"خطا در update_balance برای کاربر {user_id}: {str(e)}")
-        raise
 
 def update_spins(user_id: int, spins: int) -> None:
     try:
@@ -197,7 +195,6 @@ def update_spins(user_id: int, spins: int) -> None:
             logger.info(f"تعداد چرخش‌های کاربر {user_id} آپدیت شد: {spins}")
     except Exception as e:
         logger.error(f"خطا در update_spins برای کاربر {user_id}: {str(e)}")
-        raise
 
 def get_balance_and_spins(user_id: int) -> tuple:
     try:
@@ -208,7 +205,7 @@ def get_balance_and_spins(user_id: int) -> tuple:
             return result if result else (0, 2)
     except Exception as e:
         logger.error(f"خطا در get_balance_and_spins برای کاربر {user_id}: {str(e)}")
-        raise
+        return (0, 2)
 
 def get_user_data(user_id: int) -> tuple:
     try:
@@ -219,7 +216,7 @@ def get_user_data(user_id: int) -> tuple:
             return result if result else (0, 0, 0, None, None)
     except Exception as e:
         logger.error(f"خطا در get_user_data برای کاربر {user_id}: {str(e)}")
-        raise
+        return (0, 0, 0, None, None)
 
 def save_card_number(user_id: int, card_number: str) -> None:
     try:
@@ -233,7 +230,6 @@ def save_card_number(user_id: int, card_number: str) -> None:
             logger.info(f"شماره کارت برای کاربر {user_id} ذخیره شد")
     except Exception as e:
         logger.error(f"خطا در save_card_number برای کاربر {user_id}: {str(e)}")
-        raise
 
 def record_payment(user_id: int, amount: int, card_number: str) -> int:
     try:
@@ -249,7 +245,7 @@ def record_payment(user_id: int, amount: int, card_number: str) -> int:
             return payment_id
     except Exception as e:
         logger.error(f"خطا در record_payment برای کاربر {user_id}: {str(e)}")
-        raise
+        return 0
 
 def check_invitation(inviter_id: int, invitee_id: int) -> bool:
     try:
@@ -262,7 +258,7 @@ def check_invitation(inviter_id: int, invitee_id: int) -> bool:
             return cursor.fetchone() is not None
     except Exception as e:
         logger.error(f"خطا در check_invitation برای inviter {inviter_id} و invitee {invitee_id}: {str(e)}")
-        raise
+        return False
 
 def record_invitation(inviter_id: int, invitee_id: int) -> None:
     try:
@@ -276,7 +272,6 @@ def record_invitation(inviter_id: int, invitee_id: int) -> None:
             logger.info(f"دعوت از {inviter_id} برای {invitee_id} ثبت شد")
     except Exception as e:
         logger.error(f"خطا در record_invitation برای inviter {inviter_id} و invitee {invitee_id}: {str(e)}")
-        raise
 
 def save_pending_ref(user_id: int, ref_id: int) -> None:
     try:
@@ -290,7 +285,6 @@ def save_pending_ref(user_id: int, ref_id: int) -> None:
             logger.info(f"لینک دعوت در انتظار برای کاربر {user_id} ذخیره شد: {ref_id}")
     except Exception as e:
         logger.error(f"خطا در save_pending_ref برای کاربر {user_id}: {str(e)}")
-        raise
 
 def get_pending_ref(user_id: int) -> int:
     try:
@@ -301,7 +295,7 @@ def get_pending_ref(user_id: int) -> int:
             return result[0] if result and result[0] else None
     except Exception as e:
         logger.error(f"خطا در get_pending_ref برای کاربر {user_id}: {str(e)}")
-        raise
+        return None
 
 def clear_pending_ref(user_id: int) -> None:
     try:
@@ -315,7 +309,6 @@ def clear_pending_ref(user_id: int) -> None:
             logger.info(f"لینک دعوت در انتظار برای کاربر {user_id} پاک شد")
     except Exception as e:
         logger.error(f"خطا در clear_pending_ref برای کاربر {user_id}: {str(e)}")
-        raise
 
 def get_channels() -> list:
     try:
@@ -325,7 +318,7 @@ def get_channels() -> list:
             return cursor.fetchall()
     except Exception as e:
         logger.error(f"خطا در get_channels: {str(e)}")
-        raise
+        return []
 
 def add_channel(channel_id: str, channel_name: str = None) -> bool:
     try:
@@ -399,7 +392,7 @@ async def send_new_user_notification(user_id: int, username: str, context: Conte
 async def backup_db(update: Update, context: ContextTypes):
     user_id = update.effective_user.id
     if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ شما اجازه انجام این عملیات را ندارید.", reply_markup=chat_menu())
+        await update.message.reply_text("❌ شما اجازه انجام این عملیات را ندارید.")
         return
 
     try:
@@ -435,15 +428,15 @@ async def backup_db(update: Update, context: ContextTypes):
                 caption="✅ فایل بکاپ دیتابیس"
             )
         logger.info("فایل بکاپ دیتابیس با موفقیت برای ادمین ارسال شد")
-        await update.message.reply_text("✅ بکاپ دیتابیس با موفقیت ارسال شد.", reply_markup=chat_menu())
+        await update.message.reply_text("✅ بکاپ دیتابیس با موفقیت ارسال شد.")
     except Exception as e:
         logger.error(f"خطا در backup_db: {str(e)}")
-        await update.message.reply_text(f"❌ خطا در ایجاد بکاپ: {str(e)}", reply_markup=chat_menu())
+        await update.message.reply_text(f"❌ خطا در ایجاد بکاپ: {str(e)}")
 
 async def clear_db(update: Update, context: ContextTypes):
     user_id = update.effective_user.id
     if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ شما اجازه انجام این عملیات را ندارید.", reply_markup=chat_menu())
+        await update.message.reply_text("❌ شما اجازه انجام این عملیات را ندارید.")
         return
 
     try:
@@ -454,15 +447,15 @@ async def clear_db(update: Update, context: ContextTypes):
             cursor.execute("DELETE FROM payments")
             cursor.execute("DELETE FROM invitations")
             conn.commit()
-        await update.message.reply_text("✅ دیتابیس با موفقیت پاک شد.", reply_markup=chat_menu())
+        await update.message.reply_text("✅ دیتابیس با موفقیت پاک شد.")
     except Exception as e:
         logger.error(f"خطا در clear_db: {str(e)}")
-        await update.message.reply_text(f"❌ خطا در پاک کردن دیتابیس: {str(e)}", reply_markup=chat_menu())
+        await update.message.reply_text(f"❌ خطا در پاک کردن دیتابیس: {str(e)}")
 
 async def stats(update: Update, context: ContextTypes):
     user_id = update.effective_user.id
     if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ شما اجازه انجام این عملیات را ندارید.", reply_markup=chat_menu())
+        await update.message.reply_text("❌ شما اجازه انجام این عملیات را ندارید.")
         return
 
     try:
@@ -484,17 +477,16 @@ async def stats(update: Update, context: ContextTypes):
             f"📢 تعداد کل دعوت‌ها: {total_invites:,}\n"
             f"💰 مجموع درآمد کاربران: {total_earnings:,} تومان\n"
             f"💸 تعداد پرداخت‌های تأییدشده: {total_payments:,}\n"
-            f"📺 تعداد کانال‌های اجباری: {total_channels}",
-            reply_markup=chat_menu()
+            f"📺 تعداد کانال‌های اجباری: {total_channels}"
         )
     except Exception as e:
         logger.error(f"خطا در stats: {str(e)}")
-        await update.message.reply_text(f"❌ خطا در دریافت آمار: {str(e)}", reply_markup=chat_menu())
+        await update.message.reply_text(f"❌ خطا در دریافت آمار: {str(e)}")
 
 async def user_info(update: Update, context: ContextTypes):
     user_id = update.effective_user.id
     if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ شما اجازه انجام این عملیات را ندارید.", reply_markup=chat_menu())
+        await update.message.reply_text("❌ شما اجازه انجام این عملیات را ندارید.")
         return
 
     try:
@@ -504,7 +496,7 @@ async def user_info(update: Update, context: ContextTypes):
             users = cursor.fetchall()
 
         if not users:
-            await update.message.reply_text("📉 هیچ کاربری ثبت نشده است.", reply_markup=chat_menu())
+            await update.message.reply_text("📉 هیچ کاربری ثبت نشده است.")
             return
 
         users_per_message = 50
@@ -521,25 +513,24 @@ async def user_info(update: Update, context: ContextTypes):
                     f"👥 دعوت‌ها: {invites} نفر\n"
                     f"{'-' * 20}\n"
                 )
-            await update.message.reply_text(msg, reply_markup=chat_menu())
+            await update.message.reply_text(msg)
             await asyncio.sleep(0.5)
 
         logger.info("اطلاعات کاربران برای ادمین ارسال شد")
     except Exception as e:
         logger.error(f"خطا در user_info: {str(e)}")
-        await update.message.reply_text(f"❌ خطا در دریافت اطلاعات کاربران: {str(e)}", reply_markup=chat_menu())
+        await update.message.reply_text(f"❌ خطا در دریافت اطلاعات کاربران: {str(e)}")
 
 async def add_channel_cmd(update: Update, context: ContextTypes):
     user_id = update.effective_user.id
     if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ شما اجازه انجام این عملیات را ندارید.", reply_markup=chat_menu())
+        await update.message.reply_text("❌ شما اجازه انجام این عملیات را ندارید.")
         return
 
     if not context.args:
         await update.message.reply_text(
             "❌ لطفاً آیدی کانال را وارد کنید.\n\n"
-            "مثال:\n/add_channel @channel_id [نام کانال]",
-            reply_markup=chat_menu()
+            "مثال:\n/add_channel @channel_id [نام کانال]"
         )
         return
 
@@ -547,40 +538,39 @@ async def add_channel_cmd(update: Update, context: ContextTypes):
     channel_name = " ".join(context.args[1:]) if len(context.args) > 1 else channel_id
 
     if add_channel(channel_id, channel_name):
-        await update.message.reply_text(f"✅ کانال {channel_id} با موفقیت اضافه شد.", reply_markup=chat_menu())
+        await update.message.reply_text(f"✅ کانال {channel_id} با موفقیت اضافه شد.")
     else:
-        await update.message.reply_text(f"❌ خطا در اضافه کردن کانال {channel_id}.", reply_markup=chat_menu())
+        await update.message.reply_text(f"❌ خطا در اضافه کردن کانال {channel_id}.")
 
 async def remove_channel_cmd(update: Update, context: ContextTypes):
     user_id = update.effective_user.id
     if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ شما اجازه انجام این عملیات را ندارید.", reply_markup=chat_menu())
+        await update.message.reply_text("❌ شما اجازه انجام این عملیات را ندارید.")
         return
 
     if not context.args:
         await update.message.reply_text(
             "❌ لطفاً آیدی کانال را وارد کنید.\n\n"
-            "مثال:\n/remove_channel @channel_id",
-            reply_markup=chat_menu()
+            "مثال:\n/remove_channel @channel_id"
         )
         return
 
     channel_id = context.args[0]
 
     if remove_channel(channel_id):
-        await update.message.reply_text(f"✅ کانال {channel_id} با موفقیت حذف شد.", reply_markup=chat_menu())
+        await update.message.reply_text(f"✅ کانال {channel_id} با موفقیت حذف شد.")
     else:
-        await update.message.reply_text(f"❌ خطا در حذف کردن کانال {channel_id}.", reply_markup=chat_menu())
+        await update.message.reply_text(f"❌ خطا در حذف کردن کانال {channel_id}.")
 
 async def list_channels(update: Update, context: ContextTypes):
     user_id = update.effective_user.id
     if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ شما اجازه انجام این عملیات را ندارید.", reply_markup=chat_menu())
+        await update.message.reply_text("❌ شما اجازه انجام این عملیات را ندارید.")
         return
 
     channels = get_channels()
     if not channels:
-        await update.message.reply_text("📺 هیچ کانالی برای عضویت اجباری تنظیم نشده است.", reply_markup=chat_menu())
+        await update.message.reply_text("📺 هیچ کانالی برای عضویت اجباری تنظیم نشده است.")
         return
     
     msg = "📺 کانال‌های اجباری:\n\n"
@@ -588,19 +578,9 @@ async def list_channels(update: Update, context: ContextTypes):
         msg += f"{i}. {channel_name} ({channel_id})\n"
     
     msg += "\nبرای اضافه کردن کانال:\n/add_channel @channel_id [نام کانال]\n\nبرای حذف کانال:\n/remove_channel @channel_id"
-    await update.message.reply_text(msg, reply_markup=chat_menu())
+    await update.message.reply_text(msg)
 
 # --------------------------- کیبوردها ---------------------------
-
-def main_menu():
-    keyboard = [
-        [InlineKeyboardButton("🎯 چرخوندن گردونه", callback_data="spin")],
-        [InlineKeyboardButton("💰 موجودی", callback_data="balance")],
-        [InlineKeyboardButton("🏆 پر درآمد ها", callback_data="top")],
-        [InlineKeyboardButton("👤 پروفایل", callback_data="profile")],
-        [InlineKeyboardButton("📢 دعوت دوستان", callback_data="invite")]
-    ]
-    return InlineKeyboardMarkup(keyboard)
 
 def chat_menu():
     keyboard = [
@@ -640,7 +620,7 @@ async def start(update: Update, context: ContextTypes):
     except Exception as e:
         logger.error(f"خطا در ایجاد/دریافت کاربر {user.id}: {str(e)}")
         await update.message.reply_text(
-            "❌ خطایی رخ داد. لطفاً دوباره امتحان کنید یا با پشتیبانی تماس بگیرید.",
+            "❌ خطایی رخ داد. لطفاً دوباره امتحان کنید.",
             reply_markup=chat_menu()
         )
         return
@@ -662,10 +642,21 @@ async def start(update: Update, context: ContextTypes):
                     logger.error(f"خطا در ذخیره لینک دعوت برای کاربر {user.id}: {str(e)}")
             
             # نمایش دکمه عضویت اینلاین
-            await update.message.reply_text(
-                "👋 سلام! برای استفاده از ربات، لطفاً در کانال‌های زیر عضو شوید و سپس روی دکمه «✅ عضو شدم» کلیک کنید.",
-                reply_markup=membership_check_keyboard()
-            )
+            channels = get_channels()
+            if channels:
+                channel_links = "\n".join([f"• {channel_id}" for channel_id, channel_name in channels])
+                await update.message.reply_text(
+                    f"👋 سلام {user.first_name}!\n\n"
+                    f"⚠️ برای استفاده از ربات، باید در کانال‌های زیر عضو شوید:\n\n"
+                    f"{channel_links}\n\n"
+                    "پس از عضویت، روی دکمه «✅ عضو شدم» کلیک کنید.",
+                    reply_markup=membership_check_keyboard()
+                )
+            else:
+                await update.message.reply_text(
+                    "👋 سلام! به ربات خوش آمدید!",
+                    reply_markup=chat_menu()
+                )
             return
     except Exception as e:
         logger.error(f"خطا در بررسی عضویت برای کاربر {user.id}: {str(e)}")
@@ -732,7 +723,7 @@ async def start(update: Update, context: ContextTypes):
     except Exception as e:
         logger.error(f"خطا در پردازش /start برای کاربر {user.id}: {str(e)}")
         await update.message.reply_text(
-            f"❌ خطایی رخ داد. لطفاً دوباره امتحان کنید.",
+            "❌ خطایی رخ داد. لطفاً دوباره امتحان کنید.",
             reply_markup=chat_menu()
         )
 
@@ -741,10 +732,13 @@ async def menu(update: Update, context: ContextTypes):
     logger.debug(f"دستور /menu توسط کاربر {user_id} اجرا شد")
     try:
         if not await check_channel_membership(user_id, context):
-            await update.message.reply_text(
-                "⚠️ لطفا ابتدا در کانال‌های زیر عضو شوید و سپس دوباره امتحان کنید.",
-                reply_markup=membership_check_keyboard()
-            )
+            channels = get_channels()
+            if channels:
+                channel_links = "\n".join([f"• {channel_id}" for channel_id, channel_name in channels])
+                await update.message.reply_text(
+                    f"⚠️ لطفا ابتدا در کانال‌های زیر عضو شوید:\n\n{channel_links}\nسپس دوباره امتحان کنید.",
+                    reply_markup=membership_check_keyboard()
+                )
             return
         await update.message.reply_text("منوی اصلی:", reply_markup=chat_menu())
     except Exception as e:
@@ -794,7 +788,7 @@ async def spin_wheel(user_id: int, context: ContextTypes) -> tuple:
         return amount, f"🎉 تبریک! شما برنده {amount:,} تومان شدید! 🎊\nدوباره بچرخون یا دوستاتو دعوت کن تا فرصت گردونه بیشتر بگیری!"
     except Exception as e:
         logger.error(f"خطا در spin_wheel برای کاربر {user_id}: {str(e)}")
-        raise
+        return 0, "❌ خطا در چرخاندن گردونه. لطفاً دوباره امتحان کنید."
 
 async def callback_handler(update: Update, context: ContextTypes):
     query = update.callback_query
@@ -803,7 +797,7 @@ async def callback_handler(update: Update, context: ContextTypes):
     logger.debug(f"Callback دریافت شد از کاربر {user_id}: {query.data}")
     
     if query.data.startswith("confirm_payment_") and user_id != ADMIN_ID:
-        await query.message.reply_text("❌ شما اجازه تأیید پرداخت را ندارید.", reply_markup=chat_menu())
+        await query.message.reply_text("❌ شما اجازه تأیید پرداخت را ندارید.")
         return
 
     try:
@@ -819,10 +813,13 @@ async def callback_handler(update: Update, context: ContextTypes):
     try:
         if query.data == "check_membership":
             if not await check_channel_membership(user_id, context):
-                await query.message.edit_text(
-                    "❌ هنوز در کانال‌ها عضو نشدید!\n\nلطفاً در کانال‌ها عضو شوید و سپس روی دکمه «✅ عضو شدم» کلیک کنید.",
-                    reply_markup=membership_check_keyboard()
-                )
+                channels = get_channels()
+                if channels:
+                    channel_links = "\n".join([f"• {channel_id}" for channel_id, channel_name in channels])
+                    await query.message.edit_text(
+                        f"❌ هنوز در کانال‌های زیر عضو نشدید!\n\n{channel_links}\n\nلطفاً در کانال‌ها عضو شوید و سپس روی دکمه «✅ عضو شدم» کلیک کنید.",
+                        reply_markup=membership_check_keyboard()
+                    )
                 return
             
             # ارسال پیام به ادمین فقط برای کاربران جدید
@@ -859,10 +856,13 @@ async def callback_handler(update: Update, context: ContextTypes):
             return
 
         if not await check_channel_membership(user_id, context):
-            await query.message.reply_text(
-                "⚠️ لطفا ابتدا در کانال‌ها عضو شوید و سپس دوباره امتحان کنید.",
-                reply_markup=membership_check_keyboard()
-            )
+            channels = get_channels()
+            if channels:
+                channel_links = "\n".join([f"• {channel_id}" for channel_id, channel_name in channels])
+                await query.message.reply_text(
+                    f"⚠️ لطفا ابتدا در کانال‌های زیر عضو شوید:\n\n{channel_links}\nسپس دوباره امتحان کنید.",
+                    reply_markup=membership_check_keyboard()
+                )
             return
     except Exception as e:
         logger.error(f"خطای بررسی عضویت در callback برای کاربر {user_id}: {str(e)}")
@@ -972,7 +972,7 @@ async def callback_handler(update: Update, context: ContextTypes):
                 parts = query.data.split("_")
                 if len(parts) != 4:  # باید 4 بخش داشته باشد: confirm_payment + user_id + amount
                     logger.error(f"فرمت callback_data نامعتبر: {query.data}")
-                    await query.message.reply_text("❌ خطا در تأیید پرداخت: فرمت داده نامعتبر.", reply_markup=chat_menu())
+                    await query.message.reply_text("❌ خطا در تأیید پرداخت: فرمت داده نامعتبر.")
                     return
                 
                 target_user_id = int(parts[2])
@@ -982,7 +982,7 @@ async def callback_handler(update: Update, context: ContextTypes):
                 
                 if not card_number:
                     logger.error(f"شماره کارت برای کاربر {target_user_id} ثبت نشده است")
-                    await query.message.reply_text("❌ خطا: شماره کارت ثبت نشده است.", reply_markup=chat_menu())
+                    await query.message.reply_text("❌ خطا: شماره کارت ثبت نشده است.")
                     return
                 
                 payment_id = record_payment(target_user_id, amount, card_number)
@@ -995,10 +995,10 @@ async def callback_handler(update: Update, context: ContextTypes):
                 
             except ValueError as e:
                 logger.error(f"خطا در پردازش callback_data: {query.data}, خطا: {str(e)}")
-                await query.message.reply_text("❌ خطا در تأیید پرداخت: داده نامعتبر است.", reply_markup=chat_menu())
+                await query.message.reply_text("❌ خطا در تأیید پرداخت: داده نامعتبر است.")
             except Exception as e:
                 logger.error(f"خطا در تأیید پرداخت برای کاربر {target_user_id}: {str(e)}")
-                await query.message.reply_text(f"❌ خطا در تأیید پرداخت: {str(e)}", reply_markup=chat_menu())
+                await query.message.reply_text(f"❌ خطا در تأیید پرداخت: {str(e)}")
 
     except Exception as e:
         logger.error(f"خطای هندلر callback برای کاربر {user_id}: {str(e)}")
@@ -1014,10 +1014,13 @@ async def handle_messages(update: Update, context: ContextTypes):
 
     try:
         if not await check_channel_membership(user_id, context):
-            await update.message.reply_text(
-                "⚠️ لطفا ابتدا در کانال‌ها عضو شوید و سپس دوباره امتحان کنید.",
-                reply_markup=membership_check_keyboard()
-            )
+            channels = get_channels()
+            if channels:
+                channel_links = "\n".join([f"• {channel_id}" for channel_id, channel_name in channels])
+                await update.message.reply_text(
+                    f"⚠️ لطفا ابتدا در کانال‌های زیر عضو شوید:\n\n{channel_links}\nسپس دوباره امتحان کنید.",
+                    reply_markup=membership_check_keyboard()
+                )
             return
     except Exception as e:
         logger.error(f"خطای بررسی عضویت در هندلر پیام برای کاربر {user_id}: {str(e)}")
