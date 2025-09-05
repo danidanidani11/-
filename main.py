@@ -521,47 +521,6 @@ async def user_info(update: Update, context: ContextTypes):
         logger.error(f"خطا در user_info: {str(e)}")
         await update.message.reply_text(f"❌ خطا در دریافت اطلاعات کاربران: {str(e)}")
 
-async def add_channel_cmd(update: Update, context: ContextTypes):
-    user_id = update.effective_user.id
-    if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ شما اجازه انجام این عملیات را ندارید.")
-        return
-
-    if not context.args:
-        await update.message.reply_text(
-            "❌ لطفاً آیدی کانال را وارد کنید.\n\n"
-            "مثال:\n/add_channel @channel_id [نام کانال]"
-        )
-        return
-
-    channel_id = context.args[0]
-    channel_name = " ".join(context.args[1:]) if len(context.args) > 1 else channel_id
-
-    if add_channel(channel_id, channel_name):
-        await update.message.reply_text(f"✅ کانال {channel_id} با موفقیت اضافه شد.")
-    else:
-        await update.message.reply_text(f"❌ خطا در اضافه کردن کانال {channel_id}.")
-
-async def remove_channel_cmd(update: Update, context: ContextTypes):
-    user_id = update.effective_user.id
-    if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ شما اجازه انجام این عملیات را ندارید.")
-        return
-
-    if not context.args:
-        await update.message.reply_text(
-            "❌ لطفاً آیدی کانال را وارد کنید.\n\n"
-            "مثال:\n/remove_channel @channel_id"
-        )
-        return
-
-    channel_id = context.args[0]
-
-    if remove_channel(channel_id):
-        await update.message.reply_text(f"✅ کانال {channel_id} با موفقیت حذف شد.")
-    else:
-        await update.message.reply_text(f"❌ خطا در حذف کردن کانال {channel_id}.")
-
 async def list_channels(update: Update, context: ContextTypes):
     user_id = update.effective_user.id
     if user_id != ADMIN_ID:
@@ -570,15 +529,18 @@ async def list_channels(update: Update, context: ContextTypes):
 
     channels = get_channels()
     if not channels:
-        await update.message.reply_text("📺 هیچ کانالی برای عضویت اجباری تنظیم نشده است.")
-        return
-    
-    msg = "📺 کانال‌های اجباری:\n\n"
-    for i, (channel_id, channel_name) in enumerate(channels, 1):
-        msg += f"{i}. {channel_name} ({channel_id})\n"
-    
-    msg += "\nبرای اضافه کردن کانال:\n/add_channel @channel_id [نام کانال]\n\nبرای حذف کانال:\n/remove_channel @channel_id"
-    await update.message.reply_text(msg)
+        msg = "📺 هیچ کانالی برای عضویت اجباری تنظیم نشده است."
+    else:
+        msg = "📺 کانال‌های اجباری:\n\n"
+        for i, (channel_id, channel_name) in enumerate(channels, 1):
+            msg += f"{i}. {channel_name} ({channel_id})\n"
+
+    keyboard = [
+        [InlineKeyboardButton("✅ افزودن کانال اجباری", callback_data="add_channel")],
+        [InlineKeyboardButton("❌ حذف کانال اجباری", callback_data="remove_channel")],
+        [InlineKeyboardButton("🔙 بازگشت به منو", callback_data="back")]
+    ]
+    await update.message.reply_text(msg, reply_markup=InlineKeyboardMarkup(keyboard))
 
 # --------------------------- کیبوردها ---------------------------
 
@@ -606,6 +568,12 @@ def payment_confirmation_button(user_id: int, amount: int):
 
 def membership_check_keyboard():
     keyboard = [[InlineKeyboardButton("✅ عضو شدم", callback_data="check_membership")]]
+    return InlineKeyboardMarkup(keyboard)
+
+def remove_channel_keyboard(channels):
+    keyboard = [[InlineKeyboardButton(f"حذف {channel_name} ({channel_id})", callback_data=f"delete_channel_{channel_id}")]
+                for channel_id, channel_name in channels]
+    keyboard.append([InlineKeyboardButton("🔙 بازگشت", callback_data="back_to_channel_menu")])
     return InlineKeyboardMarkup(keyboard)
 
 # --------------------------- هندلرها ---------------------------
@@ -966,6 +934,75 @@ async def callback_handler(update: Update, context: ContextTypes):
                 reply_markup=chat_menu()
             )
 
+        elif query.data == "add_channel":
+            if user_id != ADMIN_ID:
+                await query.message.reply_text("❌ شما اجازه انجام این عملیات را ندارید.")
+                return
+            await query.message.reply_text(
+                "✅ لطفاً آیدی کانال را وارد کنید و ربات را در آن ادمین کنید:",
+                reply_markup=back_button()
+            )
+            context.user_data["waiting_for_channel_id"] = True
+
+        elif query.data == "remove_channel":
+            if user_id != ADMIN_ID:
+                await query.message.reply_text("❌ شما اجازه انجام این عملیات را ندارید.")
+                return
+            channels = get_channels()
+            if not channels:
+                await query.message.reply_text(
+                    "📺 هیچ کانالی برای عضویت اجباری تنظیم نشده است.",
+                    reply_markup=back_button()
+                )
+                return
+            await query.message.reply_text(
+                "❌ کانال مورد نظر برای حذف را انتخاب کنید:",
+                reply_markup=remove_channel_keyboard(channels)
+            )
+
+        elif query.data == "back_to_channel_menu":
+            channels = get_channels()
+            if not channels:
+                msg = "📺 هیچ کانالی برای عضویت اجباری تنظیم نشده است."
+            else:
+                msg = "📺 کانال‌های اجباری:\n\n"
+                for i, (channel_id, channel_name) in enumerate(channels, 1):
+                    msg += f"{i}. {channel_name} ({channel_id})\n"
+            keyboard = [
+                [InlineKeyboardButton("✅ افزودن کانال اجباری", callback_data="add_channel")],
+                [InlineKeyboardButton("❌ حذف کانال اجباری", callback_data="remove_channel")],
+                [InlineKeyboardButton("🔙 بازگشت به منو", callback_data="back")]
+            ]
+            await query.message.edit_text(msg, reply_markup=InlineKeyboardMarkup(keyboard))
+
+        elif query.data.startswith("delete_channel_"):
+            if user_id != ADMIN_ID:
+                await query.message.reply_text("❌ شما اجازه انجام این عملیات را ندارید.")
+                return
+            channel_id = query.data.replace("delete_channel_", "")
+            if remove_channel(channel_id):
+                channels = get_channels()
+                if not channels:
+                    msg = "📺 هیچ کانالی برای عضویت اجباری تنظیم نشده است."
+                else:
+                    msg = "📺 کانال‌های اجباری:\n\n"
+                    for i, (chan_id, chan_name) in enumerate(channels, 1):
+                        msg += f"{i}. {chan_name} ({chan_id})\n"
+                keyboard = [
+                    [InlineKeyboardButton("✅ افزودن کانال اجباری", callback_data="add_channel")],
+                    [InlineKeyboardButton("❌ حذف کانال اجباری", callback_data="remove_channel")],
+                    [InlineKeyboardButton("🔙 بازگشت به منو", callback_data="back")]
+                ]
+                await query.message.edit_text(
+                    f"✅ کانال {channel_id} با موفقیت حذف شد.\n\n{msg}",
+                    reply_markup=InlineKeyboardMarkup(keyboard)
+                )
+            else:
+                await query.message.edit_text(
+                    f"❌ خطا در حذف کانال {channel_id}.",
+                    reply_markup=back_button()
+                )
+
         elif query.data.startswith("confirm_payment_"):
             logger.debug(f"Processing confirm_payment callback: {query.data}")
             try:
@@ -1155,6 +1192,61 @@ async def handle_messages(update: Update, context: ContextTypes):
             )
             context.user_data.clear()
 
+        elif context.user_data.get("waiting_for_channel_id"):
+            if user_id != ADMIN_ID:
+                await update.message.reply_text("❌ شما اجازه انجام این عملیات را ندارید.")
+                context.user_data.clear()
+                return
+            context.user_data["waiting_for_channel_id"] = False
+            channel_id = text.strip()
+            if not channel_id.startswith("@"):
+                await update.message.reply_text(
+                    "❌ آیدی کانال باید با @ شروع شود. لطفاً دوباره وارد کنید.",
+                    reply_markup=back_button()
+                )
+                context.user_data["waiting_for_channel_id"] = True
+                return
+            try:
+                chat = await context.bot.get_chat(channel_id)
+                channel_name = chat.title or channel_id
+                member = await context.bot.get_chat_member(channel_id, context.bot.id)
+                if member.status not in ['administrator', 'creator']:
+                    await update.message.reply_text(
+                        "❌ ربات در کانال ادمین نیست. لطفاً ربات را ادمین کنید و دوباره امتحان کنید.",
+                        reply_markup=back_button()
+                    )
+                    context.user_data["waiting_for_channel_id"] = True
+                    return
+                if add_channel(channel_id, channel_name):
+                    channels = get_channels()
+                    if not channels:
+                        msg = "📺 هیچ کانالی برای عضویت اجباری تنظیم نشده است."
+                    else:
+                        msg = "📺 کانال‌های اجباری:\n\n"
+                        for i, (chan_id, chan_name) in enumerate(channels, 1):
+                            msg += f"{i}. {chan_name} ({chan_id})\n"
+                    keyboard = [
+                        [InlineKeyboardButton("✅ افزودن کانال اجباری", callback_data="add_channel")],
+                        [InlineKeyboardButton("❌ حذف کانال اجباری", callback_data="remove_channel")],
+                        [InlineKeyboardButton("🔙 بازگشت به منو", callback_data="back")]
+                    ]
+                    await update.message.reply_text(
+                        f"✅ کانال {channel_id} با موفقیت اضافه شد.\n\n{msg}",
+                        reply_markup=InlineKeyboardMarkup(keyboard)
+                    )
+                else:
+                    await update.message.reply_text(
+                        f"❌ خطا در اضافه کردن کانال {channel_id}. ممکن است قبلاً اضافه شده باشد.",
+                        reply_markup=back_button()
+                    )
+            except TelegramError as e:
+                logger.error(f"خطا در بررسی کانال {channel_id}: {str(e)}")
+                await update.message.reply_text(
+                    f"❌ خطا در بررسی کانال: {str(e)}. لطفاً مطمئن شوید آیدی کانال درست است و ربات ادمین است.",
+                    reply_markup=back_button()
+                )
+                context.user_data["waiting_for_channel_id"] = True
+
     except Exception as e:
         logger.error(f"خطای هندلر پیام برای کاربر {user_id}: {str(e)}")
         await update.message.reply_text(
@@ -1176,9 +1268,7 @@ async def set_menu_commands(application):
         BotCommand(command="/clear_db", description="پاک کردن دیتابیس (ادمین)"),
         BotCommand(command="/stats", description="آمار ربات (ادمین)"),
         BotCommand(command="/user_info", description="اطلاعات کاربران (ادمین)"),
-        BotCommand(command="/add_channel", description="اضافه کردن کانال اجباری (ادمین)"),
-        BotCommand(command="/remove_channel", description="حذف کانال اجباری (ادمین)"),
-        BotCommand(command="/list_channels", description="لیست کانال‌های اجباری (ادمین)")
+        BotCommand(command="/list_channels", description="مدیریت کانال‌های اجباری (ادمین)")
     ]
     await application.bot.set_my_commands(user_commands, scope=BotCommandScopeDefault())
     await application.bot.set_my_commands(admin_commands, scope=BotCommandScopeChat(chat_id=ADMIN_ID))
@@ -1189,8 +1279,6 @@ application.add_handler(CommandHandler("backup_db", backup_db))
 application.add_handler(CommandHandler("clear_db", clear_db))
 application.add_handler(CommandHandler("stats", stats))
 application.add_handler(CommandHandler("user_info", user_info))
-application.add_handler(CommandHandler("add_channel", add_channel_cmd))
-application.add_handler(CommandHandler("remove_channel", remove_channel_cmd))
 application.add_handler(CommandHandler("list_channels", list_channels))
 application.add_handler(CallbackQueryHandler(callback_handler))
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_messages))
