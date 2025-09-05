@@ -529,53 +529,66 @@ async def user_info(update: Update, context: ContextTypes):
         logger.error(f"خطا در user_info: {str(e)}")
         await update.message.reply_text(f"❌ خطا در دریافت اطلاعات کاربران: {str(e)}", reply_markup=chat_menu())
 
-async def manage_channels(update: Update, context: ContextTypes):
+async def add_channel_cmd(update: Update, context: ContextTypes):
     user_id = update.effective_user.id
     if user_id != ADMIN_ID:
         await update.message.reply_text("❌ شما اجازه انجام این عملیات را ندارید.", reply_markup=chat_menu())
         return
 
     if not context.args:
-        channels = get_channels()
-        if not channels:
-            await update.message.reply_text("📺 هیچ کانالی برای عضویت اجباری تنظیم نشده است.", reply_markup=chat_menu())
-            return
-        
-        msg = "📺 کانال‌های اجباری:\n\n"
-        for i, (channel_id, channel_name) in enumerate(channels, 1):
-            msg += f"{i}. {channel_name} ({channel_id})\n"
-        
-        msg += "\nبرای اضافه کردن کانال:\n/add_channel @channel_id\n\nبرای حذف کانال:\n/remove_channel @channel_id"
-        await update.message.reply_text(msg, reply_markup=chat_menu())
-        return
-
-    command = context.args[0].lower()
-    
-    if command == "add" and len(context.args) >= 2:
-        channel_id = context.args[1]
-        channel_name = " ".join(context.args[2:]) if len(context.args) > 2 else None
-        
-        if add_channel(channel_id, channel_name):
-            await update.message.reply_text(f"✅ کانال {channel_id} با موفقیت اضافه شد.", reply_markup=chat_menu())
-        else:
-            await update.message.reply_text(f"❌ خطا در اضافه کردن کانال {channel_id}.", reply_markup=chat_menu())
-    
-    elif command == "remove" and len(context.args) >= 2:
-        channel_id = context.args[1]
-        
-        if remove_channel(channel_id):
-            await update.message.reply_text(f"✅ کانال {channel_id} با موفقیت حذف شد.", reply_markup=chat_menu())
-        else:
-            await update.message.reply_text(f"❌ خطا در حذف کردن کانال {channel_id}.", reply_markup=chat_menu())
-    
-    else:
         await update.message.reply_text(
-            "❌ دستور نامعتبر!\n\n"
-            "برای مشاهده کانال‌ها:\n/channels\n\n"
-            "برای اضافه کردن کانال:\n/channels add @channel_id [نام کانال]\n\n"
-            "برای حذف کانال:\n/channels remove @channel_id",
+            "❌ لطفاً آیدی کانال را وارد کنید.\n\n"
+            "مثال:\n/add_channel @channel_id [نام کانال]",
             reply_markup=chat_menu()
         )
+        return
+
+    channel_id = context.args[0]
+    channel_name = " ".join(context.args[1:]) if len(context.args) > 1 else channel_id
+
+    if add_channel(channel_id, channel_name):
+        await update.message.reply_text(f"✅ کانال {channel_id} با موفقیت اضافه شد.", reply_markup=chat_menu())
+    else:
+        await update.message.reply_text(f"❌ خطا در اضافه کردن کانال {channel_id}.", reply_markup=chat_menu())
+
+async def remove_channel_cmd(update: Update, context: ContextTypes):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ شما اجازه انجام این عملیات را ندارید.", reply_markup=chat_menu())
+        return
+
+    if not context.args:
+        await update.message.reply_text(
+            "❌ لطفاً آیدی کانال را وارد کنید.\n\n"
+            "مثال:\n/remove_channel @channel_id",
+            reply_markup=chat_menu()
+        )
+        return
+
+    channel_id = context.args[0]
+
+    if remove_channel(channel_id):
+        await update.message.reply_text(f"✅ کانال {channel_id} با موفقیت حذف شد.", reply_markup=chat_menu())
+    else:
+        await update.message.reply_text(f"❌ خطا در حذف کردن کانال {channel_id}.", reply_markup=chat_menu())
+
+async def list_channels(update: Update, context: ContextTypes):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ شما اجازه انجام این عملیات را ندارید.", reply_markup=chat_menu())
+        return
+
+    channels = get_channels()
+    if not channels:
+        await update.message.reply_text("📺 هیچ کانالی برای عضویت اجباری تنظیم نشده است.", reply_markup=chat_menu())
+        return
+    
+    msg = "📺 کانال‌های اجباری:\n\n"
+    for i, (channel_id, channel_name) in enumerate(channels, 1):
+        msg += f"{i}. {channel_name} ({channel_id})\n"
+    
+    msg += "\nبرای اضافه کردن کانال:\n/add_channel @channel_id [نام کانال]\n\nبرای حذف کانال:\n/remove_channel @channel_id"
+    await update.message.reply_text(msg, reply_markup=chat_menu())
 
 # --------------------------- کیبوردها ---------------------------
 
@@ -621,19 +634,19 @@ async def start(update: Update, context: ContextTypes):
     user = update.effective_user
     logger.debug(f"دستور /start توسط کاربر {user.id} اجرا شد")
     
-    # ذخیره اطلاعات کاربر
     try:
+        # ذخیره اطلاعات کاربر
         is_new_user = get_or_create_user(user.id, user.username)
     except Exception as e:
         logger.error(f"خطا در ایجاد/دریافت کاربر {user.id}: {str(e)}")
         await update.message.reply_text(
-            "❌ خطایی رخ داد. لطفاً دوباره امتحان کنید یا با پشتیبانی (@teazadmin) تماس بگیرید.",
+            "❌ خطایی رخ داد. لطفاً دوباره امتحان کنید یا با پشتیبانی تماس بگیرید.",
             reply_markup=chat_menu()
         )
         return
 
-    # بررسی عضویت در کانال‌ها
     try:
+        # بررسی عضویت در کانال‌ها
         is_member = await check_channel_membership(user.id, context)
         if not is_member:
             # ذخیره لینک دعوت اگر وجود دارد
@@ -649,26 +662,15 @@ async def start(update: Update, context: ContextTypes):
                     logger.error(f"خطا در ذخیره لینک دعوت برای کاربر {user.id}: {str(e)}")
             
             # نمایش دکمه عضویت اینلاین
-            channels = get_channels()
-            if channels:
-                channel_list = "\n".join([f"• {channel_name} ({channel_id})" for channel_id, channel_name in channels])
-                await update.message.reply_text(
-                    f"👋 سلام {user.first_name}!\n\n"
-                    f"⚠️ برای استفاده از ربات، باید در کانال‌های زیر عضو شوید:\n\n"
-                    f"{channel_list}\n\n"
-                    "پس از عضویت، روی دکمه «✅ عضو شدم» کلیک کنید.",
-                    reply_markup=membership_check_keyboard()
-                )
-            else:
-                await update.message.reply_text(
-                    "👋 سلام! به ربات خوش آمدید!",
-                    reply_markup=chat_menu()
-                )
+            await update.message.reply_text(
+                "👋 سلام! برای استفاده از ربات، لطفاً در کانال‌های زیر عضو شوید و سپس روی دکمه «✅ عضو شدم» کلیک کنید.",
+                reply_markup=membership_check_keyboard()
+            )
             return
     except Exception as e:
         logger.error(f"خطا در بررسی عضویت برای کاربر {user.id}: {str(e)}")
         await update.message.reply_text(
-            "⚠️ خطایی در بررسی عضویت رخ داد. لطفاً دوباره امتحان کنید یا با پشتیبانی (@teazadmin) تماس بگیرید.",
+            "⚠️ خطایی در بررسی عضویت رخ داد. لطفاً دوباره امتحان کنید.",
             reply_markup=chat_menu()
         )
         return
@@ -730,7 +732,7 @@ async def start(update: Update, context: ContextTypes):
     except Exception as e:
         logger.error(f"خطا در پردازش /start برای کاربر {user.id}: {str(e)}")
         await update.message.reply_text(
-            f"❌ خطایی رخ داد: {str(e)}\nلطفاً دوباره امتحان کنید یا با پشتیبانی (@teazadmin) تماس بگیرید.",
+            f"❌ خطایی رخ داد. لطفاً دوباره امتحان کنید.",
             reply_markup=chat_menu()
         )
 
@@ -739,19 +741,16 @@ async def menu(update: Update, context: ContextTypes):
     logger.debug(f"دستور /menu توسط کاربر {user_id} اجرا شد")
     try:
         if not await check_channel_membership(user_id, context):
-            channels = get_channels()
-            if channels:
-                channel_list = "\n".join([f"• {channel_name} ({channel_id})" for channel_id, channel_name in channels])
-                await update.message.reply_text(
-                    f"⚠️ لطفا ابتدا در کانال‌های زیر عضو شوید:\n\n{channel_list}\nسپس دوباره امتحان کنید.",
-                    reply_markup=membership_check_keyboard()
-                )
+            await update.message.reply_text(
+                "⚠️ لطفا ابتدا در کانال‌های زیر عضو شوید و سپس دوباره امتحان کنید.",
+                reply_markup=membership_check_keyboard()
+            )
             return
         await update.message.reply_text("منوی اصلی:", reply_markup=chat_menu())
     except Exception as e:
         logger.error(f"خطای بررسی عضویت در منو برای کاربر {user_id}: {str(e)}")
         await update.message.reply_text(
-            "⚠️ خطایی در بررسی عضویت رخ داد. لطفاً دوباره امتحان کنید یا با پشتیبانی (@teazadmin) تماس بگیرید.",
+            "⚠️ خطایی در بررسی عضویت رخ داد. لطفاً دوباره امتحان کنید.",
             reply_markup=chat_menu()
         )
 
@@ -812,7 +811,7 @@ async def callback_handler(update: Update, context: ContextTypes):
     except Exception as e:
         logger.error(f"خطا در ایجاد/دریافت کاربر {user_id} در callback: {str(e)}")
         await query.message.reply_text(
-            f"❌ خطایی رخ داد: {str(e)}\nلطفاً دوباره امتحان کنید یا با پشتیبانی (@teazadmin) تماس بگیرید.",
+            "❌ خطایی رخ داد. لطفاً دوباره امتحان کنید.",
             reply_markup=chat_menu()
         )
         return
@@ -820,13 +819,10 @@ async def callback_handler(update: Update, context: ContextTypes):
     try:
         if query.data == "check_membership":
             if not await check_channel_membership(user_id, context):
-                channels = get_channels()
-                if channels:
-                    channel_list = "\n".join([f"• {channel_name} ({channel_id})" for channel_id, channel_name in channels])
-                    await query.message.edit_text(
-                        f"❌ هنوز در کانال‌های زیر عضو نشدید!\n\n{channel_list}\n\nلطفاً در کانال‌ها عضو شوید و سپس روی دکمه «✅ عضو شدم» کلیک کنید.",
-                        reply_markup=membership_check_keyboard()
-                    )
+                await query.message.edit_text(
+                    "❌ هنوز در کانال‌ها عضو نشدید!\n\nلطفاً در کانال‌ها عضو شوید و سپس روی دکمه «✅ عضو شدم» کلیک کنید.",
+                    reply_markup=membership_check_keyboard()
+                )
                 return
             
             # ارسال پیام به ادمین فقط برای کاربران جدید
@@ -863,19 +859,15 @@ async def callback_handler(update: Update, context: ContextTypes):
             return
 
         if not await check_channel_membership(user_id, context):
-            channels = get_channels()
-            if channels:
-                channel_list = "\n".join([f"• {channel_name} ({channel_id})" for channel_id, channel_name in channels])
-                await query.message.reply_text(
-                    f"⚠️ لطفا ابتدا در کانال‌های زیر عضو شوید:\n\n{channel_list}\nسپس دوباره امتحان کنید.\n\n"
-                    "اگر مشکلی پیش آمد، با پشتیبانی (@teazadmin) تماس بگیرید.",
-                    reply_markup=membership_check_keyboard()
-                )
+            await query.message.reply_text(
+                "⚠️ لطفا ابتدا در کانال‌ها عضو شوید و سپس دوباره امتحان کنید.",
+                reply_markup=membership_check_keyboard()
+            )
             return
     except Exception as e:
         logger.error(f"خطای بررسی عضویت در callback برای کاربر {user_id}: {str(e)}")
         await query.message.reply_text(
-            "⚠️ خطایی در بررسی عضویت رخ داد. لطفاً دوباره امتحان کنید یا با پشتیبانی (@teazadmin) تماس بگیرید.",
+            "⚠️ خطایی در بررسی عضویت رخ داد. لطفاً دوباره امتحان کنید.",
             reply_markup=chat_menu()
         )
         return
@@ -1011,7 +1003,7 @@ async def callback_handler(update: Update, context: ContextTypes):
     except Exception as e:
         logger.error(f"خطای هندلر callback برای کاربر {user_id}: {str(e)}")
         await query.message.reply_text(
-            f"❌ خطایی رخ داد: {str(e)}\nلطفاً دوباره امتحان کنید یا با پشتیبانی (@teazadmin) تماس بگیرید.",
+            "❌ خطایی رخ داد. لطفاً دوباره امتحان کنید.",
             reply_markup=chat_menu()
         )
 
@@ -1022,19 +1014,15 @@ async def handle_messages(update: Update, context: ContextTypes):
 
     try:
         if not await check_channel_membership(user_id, context):
-            channels = get_channels()
-            if channels:
-                channel_list = "\n".join([f"• {channel_name} ({channel_id})" for channel_id, channel_name in channels])
-                await update.message.reply_text(
-                    f"⚠️ لطفا ابتدا در کانال‌های زیر عضو شوید:\n\n{channel_list}\nسپس دوباره امتحان کنید.\n\n"
-                    "اگر مشکلی پیش آمد، با پشتیبانی (@teazadmin) تماس بگیرید.",
-                    reply_markup=membership_check_keyboard()
-                )
+            await update.message.reply_text(
+                "⚠️ لطفا ابتدا در کانال‌ها عضو شوید و سپس دوباره امتحان کنید.",
+                reply_markup=membership_check_keyboard()
+            )
             return
     except Exception as e:
         logger.error(f"خطای بررسی عضویت در هندلر پیام برای کاربر {user_id}: {str(e)}")
         await update.message.reply_text(
-            "⚠️ خطایی در بررسی عضویت رخ داد. لطفاً دوباره امتحان کنید یا با پشتیبانی (@teazadmin) تماس بگیرید.",
+            "⚠️ خطایی در بررسی عضویت رخ داد. لطفاً دوباره امتحان کنید.",
             reply_markup=chat_menu()
         )
         return
@@ -1167,7 +1155,7 @@ async def handle_messages(update: Update, context: ContextTypes):
     except Exception as e:
         logger.error(f"خطای هندلر پیام برای کاربر {user_id}: {str(e)}")
         await update.message.reply_text(
-            f"❌ خطایی رخ داد: {str(e)}\nلطفاً دوباره امتحان کنید یا با پشتیبانی (@teazadmin) تماس بگیرید.",
+            "❌ خطایی رخ داد. لطفاً دوباره امتحان کنید.",
             reply_markup=chat_menu()
         )
 
@@ -1185,7 +1173,9 @@ async def set_menu_commands(application):
         BotCommand(command="/clear_db", description="پاک کردن دیتابیس (ادمین)"),
         BotCommand(command="/stats", description="آمار ربات (ادمین)"),
         BotCommand(command="/user_info", description="اطلاعات کاربران (ادمین)"),
-        BotCommand(command="/channels", description="مدیریت کانال‌های اجباری (ادمین)")
+        BotCommand(command="/add_channel", description="اضافه کردن کانال اجباری (ادمین)"),
+        BotCommand(command="/remove_channel", description="حذف کانال اجباری (ادمین)"),
+        BotCommand(command="/list_channels", description="لیست کانال‌های اجباری (ادمین)")
     ]
     await application.bot.set_my_commands(user_commands, scope=BotCommandScopeDefault())
     await application.bot.set_my_commands(admin_commands, scope=BotCommandScopeChat(chat_id=ADMIN_ID))
@@ -1196,7 +1186,9 @@ application.add_handler(CommandHandler("backup_db", backup_db))
 application.add_handler(CommandHandler("clear_db", clear_db))
 application.add_handler(CommandHandler("stats", stats))
 application.add_handler(CommandHandler("user_info", user_info))
-application.add_handler(CommandHandler("channels", manage_channels))
+application.add_handler(CommandHandler("add_channel", add_channel_cmd))
+application.add_handler(CommandHandler("remove_channel", remove_channel_cmd))
+application.add_handler(CommandHandler("list_channels", list_channels))
 application.add_handler(CallbackQueryHandler(callback_handler))
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_messages))
 
