@@ -123,11 +123,11 @@ def init_db():
 
 # --------------------------- توابع کمکی ---------------------------
 
-def get_or_create_user(user_id: int, username: str = None) -> tuple:
+def get_or_create_user(user_id: int, username: str = None) -> bool:
     try:
         with get_db_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT user_id, balance, spins, is_new_user FROM users WHERE user_id = %s", (user_id,))
+            cursor.execute("SELECT user_id, is_new_user FROM users WHERE user_id = %s", (user_id,))
             user = cursor.fetchone()
             is_new = False
             if not user:
@@ -143,15 +143,15 @@ def get_or_create_user(user_id: int, username: str = None) -> tuple:
                     "UPDATE users SET balance = balance + %s, spins = %s, last_action = %s, username = %s WHERE user_id = %s",
                     (ADMIN_BALANCE_BOOST, ADMIN_INITIAL_SPINS, datetime.now(), username, user_id)
                 )
-                is_new = user[3] if user else False
+                is_new = user[1]
             else:
                 cursor.execute(
                     "UPDATE users SET last_action = %s, username = %s WHERE user_id = %s",
                     (datetime.now(), username, user_id)
                 )
-                is_new = user[3] if user else False
+                is_new = user[1]
             conn.commit()
-            logger.info(f"کاربر {user_id} پردازش شد: {'جدید' if not user else 'موجود'}")
+            logger.info(f"کاربر {user_id} پردازش شد: {'جدید' if is_new else 'موجود'}")
             return is_new
     except Exception as e:
         logger.error(f"خطا در get_or_create_user برای کاربر {user_id}: {str(e)}")
@@ -166,7 +166,7 @@ def mark_user_as_old(user_id: int) -> None:
                 (user_id,)
             )
             conn.commit()
-            logger.info(f"کاربر {user_id} به عنوان کاربر قدیمی علامت گذاری شد")
+            logger.info(f"کاربر {user_id} به عنوان کاربر قدیمی علامت‌گذاری شد")
     except Exception as e:
         logger.error(f"خطا در mark_user_as_old برای کاربر {user_id}: {str(e)}")
 
@@ -202,6 +202,7 @@ def get_balance_and_spins(user_id: int) -> tuple:
             cursor = conn.cursor()
             cursor.execute("SELECT balance, spins FROM users WHERE user_id = %s", (user_id,))
             result = cursor.fetchone()
+            conn.commit()  # اطمینان از commit برای تازه‌سازی داده‌ها
             return result if result else (0, 2)
     except Exception as e:
         logger.error(f"خطا در get_balance_and_spins برای کاربر {user_id}: {str(e)}")
@@ -213,6 +214,7 @@ def get_user_data(user_id: int) -> tuple:
             cursor = conn.cursor()
             cursor.execute("SELECT balance, invites, total_earnings, card_number, username FROM users WHERE user_id = %s", (user_id,))
             result = cursor.fetchone()
+            conn.commit()
             return result if result else (0, 0, 0, None, None)
     except Exception as e:
         logger.error(f"خطا در get_user_data برای کاربر {user_id}: {str(e)}")
@@ -255,7 +257,9 @@ def check_invitation(inviter_id: int, invitee_id: int) -> bool:
                 "SELECT 1 FROM invitations WHERE inviter_id = %s AND invitee_id = %s",
                 (inviter_id, invitee_id)
             )
-            return cursor.fetchone() is not None
+            result = cursor.fetchone()
+            conn.commit()
+            return result is not None
     except Exception as e:
         logger.error(f"خطا در check_invitation برای inviter {inviter_id} و invitee {invitee_id}: {str(e)}")
         return False
@@ -292,6 +296,7 @@ def get_pending_ref(user_id: int) -> int:
             cursor = conn.cursor()
             cursor.execute("SELECT pending_ref_id FROM users WHERE user_id = %s", (user_id,))
             result = cursor.fetchone()
+            conn.commit()
             return result[0] if result and result[0] else None
     except Exception as e:
         logger.error(f"خطا در get_pending_ref برای کاربر {user_id}: {str(e)}")
@@ -315,7 +320,10 @@ def get_channels() -> list:
         with get_db_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT channel_id, channel_name FROM channels ORDER BY added_at")
-            return cursor.fetchall()
+            result = cursor.fetchall()
+            conn.commit()
+            logger.info(f"کانال‌ها دریافت شدند: {result}")
+            return result
     except Exception as e:
         logger.error(f"خطا در get_channels: {str(e)}")
         return []
@@ -352,6 +360,7 @@ async def check_channel_membership(user_id: int, context: ContextTypes) -> bool:
     try:
         channels = get_channels()
         if not channels:
+            logger.info(f"کاربر {user_id}: هیچ کانال اجباری وجود ندارد")
             return True
             
         for channel_id, channel_name in channels:
@@ -376,16 +385,19 @@ async def check_channel_membership(user_id: int, context: ContextTypes) -> bool:
 
 async def send_new_user_notification(user_id: int, username: str, context: ContextTypes):
     try:
-        await context.bot.send_message(
-            ADMIN_ID,
+        message = (
             f"👤 کاربر جدید به ربات اضافه شد:\n\n"
             f"🆔 آیدی عددی: {user_id}\n"
             f"📛 یوزرنیم: @{username if username else 'بدون یوزرنیم'}\n"
             f"📅 تاریخ: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
         )
-        logger.info(f"اطلاع رسانی کاربر جدید برای ادمین ارسال شد: {user_id}")
+        await context.bot.send_message(
+            chat_id=ADMIN_ID,
+            text=message
+        )
+        logger.info(f"اطلاع‌رسانی کاربر جدید برای ادمین ارسال شد: {user_id}, پیام: {message}")
     except Exception as e:
-        logger.error(f"خطا در ارسال اطلاع‌رسانی کاربر جدید: {str(e)}")
+        logger.error(f"خطا در ارسال اطلاع‌رسانی کاربر جدید برای کاربر {user_id}: {str(e)}")
 
 # --------------------------- دستورات ادمین ---------------------------
 
@@ -448,6 +460,7 @@ async def clear_db(update: Update, context: ContextTypes):
             cursor.execute("DELETE FROM invitations")
             conn.commit()
         await update.message.reply_text("✅ دیتابیس با موفقیت پاک شد.")
+        logger.info("دیتابیس با موفقیت پاک شد")
     except Exception as e:
         logger.error(f"خطا در clear_db: {str(e)}")
         await update.message.reply_text(f"❌ خطا در پاک کردن دیتابیس: {str(e)}")
@@ -461,18 +474,35 @@ async def stats(update: Update, context: ContextTypes):
     try:
         with get_db_connection() as conn:
             cursor = conn.cursor()
+            
+            # تعداد کل کاربران
             cursor.execute("SELECT COUNT(*) FROM users")
             total_users = cursor.fetchone()[0] or 0
+            logger.debug(f"Stats: total_users = {total_users}")
+            
+            # تعداد کل دعوت‌ها
             cursor.execute("SELECT COALESCE(SUM(invites), 0) FROM users")
             total_invites = cursor.fetchone()[0] or 0
+            logger.debug(f"Stats: total_invites = {total_invites}")
+            
+            # مجموع درآمد کاربران
             cursor.execute("SELECT COALESCE(SUM(total_earnings), 0) FROM users")
             total_earnings = cursor.fetchone()[0] or 0
+            logger.debug(f"Stats: total_earnings = {total_earnings}")
+            
+            # تعداد پرداخت‌های تأییدشده
             cursor.execute("SELECT COUNT(*) FROM payments")
             total_payments = cursor.fetchone()[0] or 0
+            logger.debug(f"Stats: total_payments = {total_payments}")
+            
+            # تعداد کانال‌های اجباری
             cursor.execute("SELECT COUNT(*) FROM channels")
             total_channels = cursor.fetchone()[0] or 0
+            logger.debug(f"Stats: total_channels = {total_channels}")
             
-        await update.message.reply_text(
+            conn.commit()  # اطمینان از commit برای تازه‌سازی داده‌ها
+
+        msg = (
             f"📊 آمار ربات:\n\n"
             f"👥 تعداد کل کاربران: {total_users:,}\n"
             f"📢 تعداد کل دعوت‌ها: {total_invites:,}\n"
@@ -480,8 +510,10 @@ async def stats(update: Update, context: ContextTypes):
             f"💸 تعداد پرداخت‌های تأییدشده: {total_payments:,}\n"
             f"📺 تعداد کانال‌های اجباری: {total_channels}"
         )
+        await update.message.reply_text(msg)
+        logger.info(f"آمار ربات برای ادمین {user_id} ارسال شد: {msg}")
     except Exception as e:
-        logger.error(f"خطا در stats: {str(e)}")
+        logger.error(f"خطا در stats برای کاربر {user_id}: {str(e)}")
         await update.message.reply_text(f"❌ خطا در دریافت آمار: {str(e)}")
 
 async def user_info(update: Update, context: ContextTypes):
@@ -495,6 +527,7 @@ async def user_info(update: Update, context: ContextTypes):
             cursor = conn.cursor()
             cursor.execute("SELECT user_id, username, balance, invites FROM users ORDER BY user_id")
             users = cursor.fetchall()
+            conn.commit()
 
         if not users:
             await update.message.reply_text("📉 هیچ کاربری ثبت نشده است.")
@@ -586,6 +619,7 @@ async def start(update: Update, context: ContextTypes):
     try:
         # ذخیره اطلاعات کاربر
         is_new_user = get_or_create_user(user.id, user.username)
+        logger.debug(f"کاربر {user.id} وضعیت جدید: {is_new_user}")
     except Exception as e:
         logger.error(f"خطا در ایجاد/دریافت کاربر {user.id}: {str(e)}")
         await update.message.reply_text(
@@ -622,6 +656,10 @@ async def start(update: Update, context: ContextTypes):
                     reply_markup=membership_check_keyboard()
                 )
             else:
+                # اگر هیچ کانال اجباری وجود ندارد
+                if is_new_user:
+                    await send_new_user_notification(user.id, user.username, context)
+                    mark_user_as_old(user.id)
                 await update.message.reply_text(
                     "👋 سلام! به ربات خوش آمدید!",
                     reply_markup=chat_menu()
@@ -635,12 +673,7 @@ async def start(update: Update, context: ContextTypes):
         )
         return
 
-    # ارسال پیام به ادمین فقط برای کاربران جدید
-    if is_new_user:
-        await send_new_user_notification(user.id, user.username, context)
-        mark_user_as_old(user.id)
-
-    # پردازش لینک دعوت پس از تأیید عضویت
+    # پردازش لینک دعوت (اگر کانال اجباری وجود ندارد)
     try:
         if context.args:
             try:
@@ -683,6 +716,10 @@ async def start(update: Update, context: ContextTypes):
                         "🎉 یه نفر با لینک دعوتت به گردونه شانس پیوست! یه فرصت گردونه برات اضافه شد! 🚀"
                     )
             clear_pending_ref(user.id)
+
+        if is_new_user:
+            await send_new_user_notification(user.id, user.username, context)
+            mark_user_as_old(user.id)
 
         await update.message.reply_text(
             "🎉 خوش اومدی به گردونه شانس!\n\n"
@@ -771,6 +808,7 @@ async def callback_handler(update: Update, context: ContextTypes):
 
     try:
         is_new_user = get_or_create_user(user_id, query.from_user.username)
+        logger.debug(f"Callback: کاربر {user_id} وضعیت جدید: {is_new_user}")
     except Exception as e:
         logger.error(f"خطا در ایجاد/دریافت کاربر {user_id} در callback: {str(e)}")
         await query.message.reply_text(
@@ -791,12 +829,13 @@ async def callback_handler(update: Update, context: ContextTypes):
                     )
                 return
             
-            # ارسال پیام به ادمین فقط برای کاربران جدید
+            # ارسال اطلاع‌رسانی برای کاربر جدید پس از تأیید عضویت
             if is_new_user:
                 await send_new_user_notification(user_id, query.from_user.username, context)
                 mark_user_as_old(user_id)
+                logger.debug(f"کاربر {user_id} اطلاع‌رسانی شد و به عنوان قدیمی علامت‌گذاری شد")
 
-            # پردازش لینک دعوت ذخیره شده پس از عضویت
+            # پردازش لینک دعوت ذخیره شده
             pending_ref = get_pending_ref(user_id)
             if pending_ref and pending_ref != user_id and not check_invitation(pending_ref, user_id):
                 with get_db_connection() as conn:
@@ -906,6 +945,7 @@ async def callback_handler(update: Update, context: ContextTypes):
                 cursor = conn.cursor()
                 cursor.execute("SELECT user_id, total_earnings FROM top_winners ORDER BY total_earnings DESC LIMIT 10")
                 rows = cursor.fetchall()
+                conn.commit()
             msg = "🏆 پر درآمدهای گردونه شانس:\n\n"
             for i, row in enumerate(rows, 1):
                 msg += f"{i}. آیدی: {row[0]} - درآمد: {row[1]:,} تومان\n"
@@ -1105,6 +1145,7 @@ async def handle_messages(update: Update, context: ContextTypes):
                 cursor = conn.cursor()
                 cursor.execute("SELECT user_id, total_earnings FROM top_winners ORDER BY total_earnings DESC LIMIT 10")
                 rows = cursor.fetchall()
+                conn.commit()
             msg = "🏆 پر درآمدهای گردونه شانس:\n\n"
             for i, row in enumerate(rows, 1):
                 msg += f"{i}. آیدی: {row[0]} - درآمد: {row[1]:,} تومان\n"
