@@ -32,7 +32,7 @@ load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN", "8078210260:AAEX-vz_apP68a6WhzaGhuAKK7amC1qUiEY")
 ADMIN_ID = int(os.getenv("ADMIN_ID", 5542927340))
 YOUR_ID = int(os.getenv("YOUR_ID", 123456789))
-CHANNEL_ID = os.getenv("CHANNEL_ID", "@Charkhoun")
+DEFAULT_CHANNEL_ID = os.getenv("CHANNEL_ID", "@Charkhoun")
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://charkhon_user:grMZtPEdreHgfbZrmSnrueTjgpvTzdk2@dpg-d2sislggjchc73aeb7og-a/charkhon")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://0kik4x8alj.onrender.com")
 STRICT_MEMBERSHIP = os.getenv("STRICT_MEMBERSHIP", "true").lower() == "true"
@@ -68,11 +68,19 @@ def init_db():
                     spins INTEGER DEFAULT 2,
                     total_earnings INTEGER DEFAULT 0,
                     card_number TEXT,
-                    last_action TIMESTAMP
+                    last_action TIMESTAMP,
+                    username TEXT,
+                    pending_ref_id BIGINT,
+                    is_new_user BOOLEAN DEFAULT TRUE
                 )
             ''')
-            cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT")
-            cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS pending_ref_id BIGINT")
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS channels (
+                    channel_id TEXT PRIMARY KEY,
+                    channel_name TEXT,
+                    added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS top_winners (
                     user_id BIGINT PRIMARY KEY,
@@ -98,6 +106,15 @@ def init_db():
                     PRIMARY KEY (inviter_id, invitee_id)
                 )
             ''')
+            
+            # اضافه کردن کانال پیش‌فرض اگر وجود ندارد
+            cursor.execute("SELECT 1 FROM channels WHERE channel_id = %s", (DEFAULT_CHANNEL_ID,))
+            if not cursor.fetchone():
+                cursor.execute(
+                    "INSERT INTO channels (channel_id, channel_name) VALUES (%s, %s)",
+                    (DEFAULT_CHANNEL_ID, "کانال اصلی")
+                )
+            
             conn.commit()
             logger.info("دیتابیس با موفقیت مقداردهی شد")
     except Exception as e:
@@ -106,33 +123,52 @@ def init_db():
 
 # --------------------------- توابع کمکی ---------------------------
 
-def get_or_create_user(user_id: int, username: str = None) -> None:
+def get_or_create_user(user_id: int, username: str = None) -> tuple:
     try:
         with get_db_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT user_id, balance, spins FROM users WHERE user_id = %s", (user_id,))
+            cursor.execute("SELECT user_id, balance, spins, is_new_user FROM users WHERE user_id = %s", (user_id,))
             user = cursor.fetchone()
+            is_new = False
             if not user:
                 initial_balance = ADMIN_BALANCE_BOOST if user_id == ADMIN_ID else 0
                 initial_spins = ADMIN_INITIAL_SPINS if user_id == ADMIN_ID else 2
                 cursor.execute(
-                    "INSERT INTO users (user_id, balance, spins, last_action, username) VALUES (%s, %s, %s, %s, %s)",
-                    (user_id, initial_balance, initial_spins, datetime.now(), username)
+                    "INSERT INTO users (user_id, balance, spins, last_action, username, is_new_user) VALUES (%s, %s, %s, %s, %s, %s)",
+                    (user_id, initial_balance, initial_spins, datetime.now(), username, True)
                 )
+                is_new = True
             elif user_id == ADMIN_ID:
                 cursor.execute(
                     "UPDATE users SET balance = balance + %s, spins = %s, last_action = %s, username = %s WHERE user_id = %s",
                     (ADMIN_BALANCE_BOOST, ADMIN_INITIAL_SPINS, datetime.now(), username, user_id)
                 )
+                is_new = user[3] if user else False
             else:
                 cursor.execute(
                     "UPDATE users SET last_action = %s, username = %s WHERE user_id = %s",
                     (datetime.now(), username, user_id)
                 )
+                is_new = user[3] if user else False
             conn.commit()
             logger.info(f"کاربر {user_id} پردازش شد: {'جدید' if not user else 'موجود'}")
+            return is_new
     except Exception as e:
         logger.error(f"خطا در get_or_create_user برای کاربر {user_id}: {str(e)}")
+        raise
+
+def mark_user_as_old(user_id: int) -> None:
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE users SET is_new_user = FALSE WHERE user_id = %s",
+                (user_id,)
+            )
+            conn.commit()
+            logger.info(f"کاربر {user_id} به عنوان کاربر قدیمی علامت گذاری شد")
+    except Exception as e:
+        logger.error(f"خطا در mark_user_as_old برای کاربر {user_id}: {str(e)}")
         raise
 
 def update_balance(user_id: int, amount: int) -> None:
@@ -178,17 +214,9 @@ def get_user_data(user_id: int) -> tuple:
     try:
         with get_db_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'username'")
-            has_username = cursor.fetchone() is not None
-            if has_username:
-                cursor.execute("SELECT balance, invites, total_earnings, card_number, username FROM users WHERE user_id = %s", (user_id,))
-            else:
-                cursor.execute("SELECT balance, invites, total_earnings, card_number FROM users WHERE user_id = %s", (user_id,))
+            cursor.execute("SELECT balance, invites, total_earnings, card_number, username FROM users WHERE user_id = %s", (user_id,))
             result = cursor.fetchone()
-            if has_username:
-                return result if result else (0, 0, 0, None, None)
-            else:
-                return result + (None,) if result else (0, 0, 0, None, None)
+            return result if result else (0, 0, 0, None, None)
     except Exception as e:
         logger.error(f"خطا در get_user_data برای کاربر {user_id}: {str(e)}")
         raise
@@ -289,18 +317,64 @@ def clear_pending_ref(user_id: int) -> None:
         logger.error(f"خطا در clear_pending_ref برای کاربر {user_id}: {str(e)}")
         raise
 
+def get_channels() -> list:
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT channel_id, channel_name FROM channels ORDER BY added_at")
+            return cursor.fetchall()
+    except Exception as e:
+        logger.error(f"خطا در get_channels: {str(e)}")
+        raise
+
+def add_channel(channel_id: str, channel_name: str = None) -> bool:
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO channels (channel_id, channel_name) VALUES (%s, %s) ON CONFLICT (channel_id) DO NOTHING",
+                (channel_id, channel_name or channel_id)
+            )
+            conn.commit()
+            logger.info(f"کانال {channel_id} اضافه شد")
+            return True
+    except Exception as e:
+        logger.error(f"خطا در add_channel: {str(e)}")
+        return False
+
+def remove_channel(channel_id: str) -> bool:
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM channels WHERE channel_id = %s", (channel_id,))
+            conn.commit()
+            logger.info(f"کانال {channel_id} حذف شد")
+            return True
+    except Exception as e:
+        logger.error(f"خطا در remove_channel: {str(e)}")
+        return False
+
 @retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
 async def check_channel_membership(user_id: int, context: ContextTypes) -> bool:
     try:
-        member = await context.bot.get_chat_member(CHANNEL_ID, user_id)
-        is_member = member.status in ['member', 'administrator', 'creator']
-        logger.info(f"بررسی عضویت برای کاربر {user_id}: {'عضو است' if is_member else 'عضو نیست'}")
-        return is_member
-    except TelegramError as e:
-        logger.error(f"خطای API تلگرام در بررسی عضویت برای کاربر {user_id}: {str(e)}")
-        if STRICT_MEMBERSHIP:
-            raise
-        return False
+        channels = get_channels()
+        if not channels:
+            return True
+            
+        for channel_id, channel_name in channels:
+            try:
+                member = await context.bot.get_chat_member(channel_id, user_id)
+                if member.status not in ['member', 'administrator', 'creator']:
+                    logger.info(f"کاربر {user_id} در کانال {channel_id} عضو نیست")
+                    return False
+            except TelegramError as e:
+                logger.error(f"خطای API تلگرام در بررسی عضویت برای کانال {channel_id}: {str(e)}")
+                if STRICT_MEMBERSHIP:
+                    raise
+                continue
+        
+        logger.info(f"کاربر {user_id} در تمام کانال‌ها عضو است")
+        return True
     except Exception as e:
         logger.error(f"خطای غیرمنتظره در بررسی عضویت برای کاربر {user_id}: {str(e)}")
         if STRICT_MEMBERSHIP:
@@ -339,12 +413,15 @@ async def backup_db(update: Update, context: ContextTypes):
             payments = cursor.fetchall()
             cursor.execute("SELECT * FROM invitations")
             invitations = cursor.fetchall()
+            cursor.execute("SELECT * FROM channels")
+            channels = cursor.fetchall()
 
         backup_data = {
             "users": [dict(zip([desc[0] for desc in cursor.description], row)) for row in users],
             "top_winners": [dict(zip([desc[0] for desc in cursor.description], row)) for row in top_winners],
             "payments": [dict(zip([desc[0] for desc in cursor.description], row)) for row in payments],
-            "invitations": [dict(zip([desc[0] for desc in cursor.description], row)) for row in invitations]
+            "invitations": [dict(zip([desc[0] for desc in cursor.description], row)) for row in invitations],
+            "channels": [dict(zip([desc[0] for desc in cursor.description], row)) for row in channels]
         }
         backup_file = f"/tmp/backup_{int(time.time())}.json"
         with open(backup_file, "w", encoding="utf-8") as f:
@@ -399,12 +476,15 @@ async def stats(update: Update, context: ContextTypes):
             total_earnings = cursor.fetchone()[0] or 0
             cursor.execute("SELECT COUNT(*) FROM payments")
             total_payments = cursor.fetchone()[0] or 0
+            cursor.execute("SELECT COUNT(*) FROM channels")
+            total_channels = cursor.fetchone()[0] or 0
         await update.message.reply_text(
             f"📊 آمار ربات:\n\n"
             f"👥 تعداد کل کاربران: {total_users:,}\n"
             f"📢 تعداد کل دعوت‌ها: {total_invites:,}\n"
             f"💰 مجموع درآمد کاربران: {total_earnings:,} تومان\n"
-            f"💸 تعداد پرداخت‌های تأییدشده: {total_payments:,}",
+            f"💸 تعداد پرداخت‌های تأییدشده: {total_payments:,}\n"
+            f"📺 تعداد کانال‌های اجباری: {total_channels}",
             reply_markup=chat_menu()
         )
     except Exception as e:
@@ -420,12 +500,7 @@ async def user_info(update: Update, context: ContextTypes):
     try:
         with get_db_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'username'")
-            has_username = cursor.fetchone() is not None
-            if has_username:
-                cursor.execute("SELECT user_id, username, balance, invites FROM users ORDER BY user_id")
-            else:
-                cursor.execute("SELECT user_id, balance, invites FROM users ORDER BY user_id")
+            cursor.execute("SELECT user_id, username, balance, invites FROM users ORDER BY user_id")
             users = cursor.fetchall()
 
         if not users:
@@ -437,11 +512,7 @@ async def user_info(update: Update, context: ContextTypes):
             msg = f"📋 اطلاعات کاربران (بخش {i // users_per_message + 1}):\n\n"
             for user in users[i:i + users_per_message]:
                 user_id = user[0]
-                if has_username:
-                    username, balance, invites = user[1], user[2], user[3]
-                else:
-                    balance, invites = user[1], user[2]
-                    username = None
+                username, balance, invites = user[1], user[2], user[3]
                 username_display = f"@{username}" if username else "بدون یوزرنیم"
                 msg += (
                     f"👤 آیدی عددی: {user_id}\n"
@@ -457,6 +528,54 @@ async def user_info(update: Update, context: ContextTypes):
     except Exception as e:
         logger.error(f"خطا در user_info: {str(e)}")
         await update.message.reply_text(f"❌ خطا در دریافت اطلاعات کاربران: {str(e)}", reply_markup=chat_menu())
+
+async def manage_channels(update: Update, context: ContextTypes):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ شما اجازه انجام این عملیات را ندارید.", reply_markup=chat_menu())
+        return
+
+    if not context.args:
+        channels = get_channels()
+        if not channels:
+            await update.message.reply_text("📺 هیچ کانالی برای عضویت اجباری تنظیم نشده است.", reply_markup=chat_menu())
+            return
+        
+        msg = "📺 کانال‌های اجباری:\n\n"
+        for i, (channel_id, channel_name) in enumerate(channels, 1):
+            msg += f"{i}. {channel_name} ({channel_id})\n"
+        
+        msg += "\nبرای اضافه کردن کانال:\n/add_channel @channel_id\n\nبرای حذف کانال:\n/remove_channel @channel_id"
+        await update.message.reply_text(msg, reply_markup=chat_menu())
+        return
+
+    command = context.args[0].lower()
+    
+    if command == "add" and len(context.args) >= 2:
+        channel_id = context.args[1]
+        channel_name = " ".join(context.args[2:]) if len(context.args) > 2 else None
+        
+        if add_channel(channel_id, channel_name):
+            await update.message.reply_text(f"✅ کانال {channel_id} با موفقیت اضافه شد.", reply_markup=chat_menu())
+        else:
+            await update.message.reply_text(f"❌ خطا در اضافه کردن کانال {channel_id}.", reply_markup=chat_menu())
+    
+    elif command == "remove" and len(context.args) >= 2:
+        channel_id = context.args[1]
+        
+        if remove_channel(channel_id):
+            await update.message.reply_text(f"✅ کانال {channel_id} با موفقیت حذف شد.", reply_markup=chat_menu())
+        else:
+            await update.message.reply_text(f"❌ خطا در حذف کردن کانال {channel_id}.", reply_markup=chat_menu())
+    
+    else:
+        await update.message.reply_text(
+            "❌ دستور نامعتبر!\n\n"
+            "برای مشاهده کانال‌ها:\n/channels\n\n"
+            "برای اضافه کردن کانال:\n/channels add @channel_id [نام کانال]\n\n"
+            "برای حذف کانال:\n/channels remove @channel_id",
+            reply_markup=chat_menu()
+        )
 
 # --------------------------- کیبوردها ---------------------------
 
@@ -504,7 +623,7 @@ async def start(update: Update, context: ContextTypes):
     
     # ذخیره اطلاعات کاربر
     try:
-        get_or_create_user(user.id, user.username)
+        is_new_user = get_or_create_user(user.id, user.username)
     except Exception as e:
         logger.error(f"خطا در ایجاد/دریافت کاربر {user.id}: {str(e)}")
         await update.message.reply_text(
@@ -513,7 +632,7 @@ async def start(update: Update, context: ContextTypes):
         )
         return
 
-    # بررسی عضویت در کانال
+    # بررسی عضویت در کانال‌ها
     try:
         is_member = await check_channel_membership(user.id, context)
         if not is_member:
@@ -529,12 +648,22 @@ async def start(update: Update, context: ContextTypes):
                 except Exception as e:
                     logger.error(f"خطا در ذخیره لینک دعوت برای کاربر {user.id}: {str(e)}")
             
-            await update.message.reply_text(
-                f"👋 سلام {user.first_name}!\n\n"
-                f"⚠️ برای استفاده از ربات، باید در کانال ما عضو شوید:\n{CHANNEL_ID}\n\n"
-                "پس از عضویت، روی دکمه «✅ عضو شدم» کلیک کنید.",
-                reply_markup=membership_check_keyboard()
-            )
+            # نمایش دکمه عضویت اینلاین
+            channels = get_channels()
+            if channels:
+                channel_list = "\n".join([f"• {channel_name} ({channel_id})" for channel_id, channel_name in channels])
+                await update.message.reply_text(
+                    f"👋 سلام {user.first_name}!\n\n"
+                    f"⚠️ برای استفاده از ربات، باید در کانال‌های زیر عضو شوید:\n\n"
+                    f"{channel_list}\n\n"
+                    "پس از عضویت، روی دکمه «✅ عضو شدم» کلیک کنید.",
+                    reply_markup=membership_check_keyboard()
+                )
+            else:
+                await update.message.reply_text(
+                    "👋 سلام! به ربات خوش آمدید!",
+                    reply_markup=chat_menu()
+                )
             return
     except Exception as e:
         logger.error(f"خطا در بررسی عضویت برای کاربر {user.id}: {str(e)}")
@@ -543,6 +672,11 @@ async def start(update: Update, context: ContextTypes):
             reply_markup=chat_menu()
         )
         return
+
+    # ارسال پیام به ادمین فقط برای کاربران جدید
+    if is_new_user:
+        await send_new_user_notification(user.id, user.username, context)
+        mark_user_as_old(user.id)
 
     # پردازش لینک دعوت پس از تأیید عضویت
     try:
@@ -588,9 +722,6 @@ async def start(update: Update, context: ContextTypes):
                     )
             clear_pending_ref(user.id)
 
-        # ارسال پیام به ادمین
-        await send_new_user_notification(user.id, user.username, context)
-
         await update.message.reply_text(
             "🎉 خوش اومدی به گردونه شانس!\n\n"
             "برای شروع، یکی از گزینه‌های زیر رو انتخاب کن:",
@@ -608,9 +739,13 @@ async def menu(update: Update, context: ContextTypes):
     logger.debug(f"دستور /menu توسط کاربر {user_id} اجرا شد")
     try:
         if not await check_channel_membership(user_id, context):
-            await update.message.reply_text(
-                f"⚠️ لطفا ابتدا در کانال ما عضو شوید:\n{CHANNEL_ID}\nسپس دوباره امتحان کنید."
-            )
+            channels = get_channels()
+            if channels:
+                channel_list = "\n".join([f"• {channel_name} ({channel_id})" for channel_id, channel_name in channels])
+                await update.message.reply_text(
+                    f"⚠️ لطفا ابتدا در کانال‌های زیر عضو شوید:\n\n{channel_list}\nسپس دوباره امتحان کنید.",
+                    reply_markup=membership_check_keyboard()
+                )
             return
         await update.message.reply_text("منوی اصلی:", reply_markup=chat_menu())
     except Exception as e:
@@ -673,7 +808,7 @@ async def callback_handler(update: Update, context: ContextTypes):
         return
 
     try:
-        get_or_create_user(user_id, query.from_user.username)
+        is_new_user = get_or_create_user(user_id, query.from_user.username)
     except Exception as e:
         logger.error(f"خطا در ایجاد/دریافت کاربر {user_id} در callback: {str(e)}")
         await query.message.reply_text(
@@ -685,12 +820,20 @@ async def callback_handler(update: Update, context: ContextTypes):
     try:
         if query.data == "check_membership":
             if not await check_channel_membership(user_id, context):
-                await query.message.edit_text(
-                    f"❌ هنوز در کانال عضو نشدید!\n\nلطفاً در کانال عضو شوید:\n{CHANNEL_ID}\nسپس روی دکمه «✅ عضو شدم» کلیک کنید.",
-                    reply_markup=membership_check_keyboard()
-                )
+                channels = get_channels()
+                if channels:
+                    channel_list = "\n".join([f"• {channel_name} ({channel_id})" for channel_id, channel_name in channels])
+                    await query.message.edit_text(
+                        f"❌ هنوز در کانال‌های زیر عضو نشدید!\n\n{channel_list}\n\nلطفاً در کانال‌ها عضو شوید و سپس روی دکمه «✅ عضو شدم» کلیک کنید.",
+                        reply_markup=membership_check_keyboard()
+                    )
                 return
             
+            # ارسال پیام به ادمین فقط برای کاربران جدید
+            if is_new_user:
+                await send_new_user_notification(user_id, query.from_user.username, context)
+                mark_user_as_old(user_id)
+
             # پردازش لینک دعوت ذخیره شده پس از عضویت
             pending_ref = get_pending_ref(user_id)
             if pending_ref and pending_ref != user_id and not check_invitation(pending_ref, user_id):
@@ -710,9 +853,6 @@ async def callback_handler(update: Update, context: ContextTypes):
                         )
                 clear_pending_ref(user_id)
             
-            # ارسال پیام به ادمین
-            await send_new_user_notification(user_id, query.from_user.username, context)
-            
             await query.message.edit_text(
                 "✅ عضویت شما تأیید شد!\n\n"
                 "🎉 خوش اومدی به گردونه شانس!\n\n"
@@ -723,11 +863,14 @@ async def callback_handler(update: Update, context: ContextTypes):
             return
 
         if not await check_channel_membership(user_id, context):
-            await query.message.reply_text(
-                f"⚠️ لطفا ابتدا در کانال ما عضو شوید:\n{CHANNEL_ID}\nسپس دوباره امتحان کنید.\n\n"
-                "اگر مشکلی پیش آمد، با پشتیبانی (@teazadmin) تماس بگیرید.",
-                reply_markup=chat_menu()
-            )
+            channels = get_channels()
+            if channels:
+                channel_list = "\n".join([f"• {channel_name} ({channel_id})" for channel_id, channel_name in channels])
+                await query.message.reply_text(
+                    f"⚠️ لطفا ابتدا در کانال‌های زیر عضو شوید:\n\n{channel_list}\nسپس دوباره امتحان کنید.\n\n"
+                    "اگر مشکلی پیش آمد، با پشتیبانی (@teazadmin) تماس بگیرید.",
+                    reply_markup=membership_check_keyboard()
+                )
             return
     except Exception as e:
         logger.error(f"خطای بررسی عضویت در callback برای کاربر {user_id}: {str(e)}")
@@ -879,11 +1022,14 @@ async def handle_messages(update: Update, context: ContextTypes):
 
     try:
         if not await check_channel_membership(user_id, context):
-            await update.message.reply_text(
-                f"⚠️ لطفا ابتدا در کانال ما عضو شوید:\n{CHANNEL_ID}\nسپس دوباره امتحان کنید.\n\n"
-                "اگر مشکلی پیش آمد، با پشتیبانی (@teazadmin) تماس بگیرید.",
-                reply_markup=chat_menu()
-            )
+            channels = get_channels()
+            if channels:
+                channel_list = "\n".join([f"• {channel_name} ({channel_id})" for channel_id, channel_name in channels])
+                await update.message.reply_text(
+                    f"⚠️ لطفا ابتدا در کانال‌های زیر عضو شوید:\n\n{channel_list}\nسپس دوباره امتحان کنید.\n\n"
+                    "اگر مشکلی پیش آمد، با پشتیبانی (@teazadmin) تماس بگیرید.",
+                    reply_markup=membership_check_keyboard()
+                )
             return
     except Exception as e:
         logger.error(f"خطای بررسی عضویت در هندلر پیام برای کاربر {user_id}: {str(e)}")
@@ -1038,7 +1184,8 @@ async def set_menu_commands(application):
         BotCommand(command="/backup_db", description="بکاپ دیتابیس (ادمین)"),
         BotCommand(command="/clear_db", description="پاک کردن دیتابیس (ادمین)"),
         BotCommand(command="/stats", description="آمار ربات (ادمین)"),
-        BotCommand(command="/user_info", description="اطلاعات کاربران (ادمین)")
+        BotCommand(command="/user_info", description="اطلاعات کاربران (ادمین)"),
+        BotCommand(command="/channels", description="مدیریت کانال‌های اجباری (ادمین)")
     ]
     await application.bot.set_my_commands(user_commands, scope=BotCommandScopeDefault())
     await application.bot.set_my_commands(admin_commands, scope=BotCommandScopeChat(chat_id=ADMIN_ID))
@@ -1049,6 +1196,7 @@ application.add_handler(CommandHandler("backup_db", backup_db))
 application.add_handler(CommandHandler("clear_db", clear_db))
 application.add_handler(CommandHandler("stats", stats))
 application.add_handler(CommandHandler("user_info", user_info))
+application.add_handler(CommandHandler("channels", manage_channels))
 application.add_handler(CallbackQueryHandler(callback_handler))
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_messages))
 
