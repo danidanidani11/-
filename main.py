@@ -466,7 +466,7 @@ async def send_new_user_notification(user_id: int, username: str, context: Conte
             )
             logger.info(f"اطلاع‌رسانی کاربر جدید به ADMIN_ID {ADMIN_ID} ارسال شد: {user_id}")
         except TelegramError as e:
-            logger.warning(f"خطا در ارسال به ADMIN_ID {ADMIN_ID}: {str(e)}. تلاش برای ارسال به YOUR_ID {YOUR_ID}")
+            logger.warning(f"خطا در ارسال به ADMIN_ID {ADMIN_ID}: {str(e)}. تلاش برای ارسان به YOUR_ID {YOUR_ID}")
             await context.bot.send_message(
                 chat_id=YOUR_ID,
                 text=message
@@ -621,60 +621,145 @@ async def handle_backup_file(update: Update, context: ContextTypes):
             cursor.execute("DELETE FROM invitations")
             cursor.execute("DELETE FROM channels")
             
-            # درج داده‌های جدید
+            # درج داده‌های جدید - کاربران
+            users_inserted = 0
+            users_skipped = 0
             for user in backup_data.get("users", []):
-                cursor.execute(
-                    "INSERT INTO users (user_id, balance, invites, spins, total_earnings, card_number, last_action, username, pending_ref_id, is_new_user) "
-                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (user_id) DO UPDATE SET "
-                    "balance = EXCLUDED.balance, invites = EXCLUDED.invites, spins = EXCLUDED.spins, "
-                    "total_earnings = EXCLUDED.total_earnings, card_number = EXCLUDED.card_number, "
-                    "last_action = EXCLUDED.last_action, username = EXCLUDED.username, "
-                    "pending_ref_id = EXCLUDED.pending_ref_id, is_new_user = EXCLUDED.is_new_user",
-                    (user.get("user_id"), user.get("balance", 0), user.get("invites", 0), 
-                     user.get("spins", 2), user.get("total_earnings", 0), user.get("card_number"), 
-                     user.get("last_action"), user.get("username"), user.get("pending_ref_id"), 
-                     user.get("is_new_user", True))
-                )
+                user_id_val = user.get("user_id")
+                if user_id_val is None:
+                    logger.warning("ردیف کاربر با user_id null نادیده گرفته شد")
+                    users_skipped += 1
+                    continue
+                    
+                try:
+                    cursor.execute(
+                        "INSERT INTO users (user_id, balance, invites, spins, total_earnings, card_number, last_action, username, pending_ref_id, is_new_user) "
+                        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (user_id) DO UPDATE SET "
+                        "balance = EXCLUDED.balance, invites = EXCLUDED.invites, spins = EXCLUDED.spins, "
+                        "total_earnings = EXCLUDED.total_earnings, card_number = EXCLUDED.card_number, "
+                        "last_action = EXCLUDED.last_action, username = EXCLUDED.username, "
+                        "pending_ref_id = EXCLUDED.pending_ref_id, is_new_user = EXCLUDED.is_new_user",
+                        (user_id_val, user.get("balance", 0), user.get("invites", 0), 
+                         user.get("spins", 2), user.get("total_earnings", 0), user.get("card_number"), 
+                         user.get("last_action"), user.get("username"), user.get("pending_ref_id"), 
+                         user.get("is_new_user", True))
+                    )
+                    users_inserted += 1
+                except Exception as e:
+                    logger.error(f"خطا در درج کاربر {user_id_val}: {str(e)}")
+                    users_skipped += 1
             
+            # درج داده‌های جدید - برندگان برتر
+            winners_inserted = 0
+            winners_skipped = 0
             for winner in backup_data.get("top_winners", []):
-                cursor.execute(
-                    "INSERT INTO top_winners (user_id, username, total_earnings, last_win) "
-                    "VALUES (%s, %s, %s, %s) ON CONFLICT (user_id) DO UPDATE SET "
-                    "username = EXCLUDED.username, total_earnings = EXCLUDED.total_earnings, last_win = EXCLUDED.last_win",
-                    (winner.get("user_id"), winner.get("username"), winner.get("total_earnings", 0), winner.get("last_win"))
-                )
+                user_id_val = winner.get("user_id")
+                if user_id_val is None:
+                    logger.warning("ردیف برنده با user_id null نادیده گرفته شد")
+                    winners_skipped += 1
+                    continue
+                    
+                try:
+                    cursor.execute(
+                        "INSERT INTO top_winners (user_id, username, total_earnings, last_win) "
+                        "VALUES (%s, %s, %s, %s) ON CONFLICT (user_id) DO UPDATE SET "
+                        "username = EXCLUDED.username, total_earnings = EXCLUDED.total_earnings, last_win = EXCLUDED.last_win",
+                        (user_id_val, winner.get("username"), winner.get("total_earnings", 0), winner.get("last_win"))
+                    )
+                    winners_inserted += 1
+                except Exception as e:
+                    logger.error(f"خطا در درج برنده {user_id_val}: {str(e)}")
+                    winners_skipped += 1
             
+            # درج داده‌های جدید - پرداخت‌ها
+            payments_inserted = 0
+            payments_skipped = 0
             for payment in backup_data.get("payments", []):
-                cursor.execute(
-                    "INSERT INTO payments (payment_id, user_id, amount, card_number, confirmed_at) "
-                    "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (payment_id) DO UPDATE SET "
-                    "user_id = EXCLUDED.user_id, amount = EXCLUDED.amount, card_number = EXCLUDED.card_number, "
-                    "confirmed_at = EXCLUDED.confirmed_at",
-                    (payment.get("payment_id"), payment.get("user_id"), payment.get("amount", 0), 
-                     payment.get("card_number"), payment.get("confirmed_at"))
-                )
+                payment_id_val = payment.get("payment_id")
+                user_id_val = payment.get("user_id")
+                
+                if user_id_val is None:
+                    logger.warning(f"ردیف پرداخت {payment_id_val} با user_id null نادیده گرفته شد")
+                    payments_skipped += 1
+                    continue
+                    
+                try:
+                    cursor.execute(
+                        "INSERT INTO payments (payment_id, user_id, amount, card_number, confirmed_at) "
+                        "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (payment_id) DO UPDATE SET "
+                        "user_id = EXCLUDED.user_id, amount = EXCLUDED.amount, card_number = EXCLUDED.card_number, "
+                        "confirmed_at = EXCLUDED.confirmed_at",
+                        (payment_id_val, user_id_val, payment.get("amount", 0), 
+                         payment.get("card_number"), payment.get("confirmed_at"))
+                    )
+                    payments_inserted += 1
+                except Exception as e:
+                    logger.error(f"خطا در درج پرداخت {payment_id_val}: {str(e)}")
+                    payments_skipped += 1
             
+            # درج داده‌های جدید - دعوت‌ها
+            invitations_inserted = 0
+            invitations_skipped = 0
             for invitation in backup_data.get("invitations", []):
-                cursor.execute(
-                    "INSERT INTO invitations (inviter_id, invitee_id, invited_at) "
-                    "VALUES (%s, %s, %s) ON CONFLICT (inviter_id, invitee_id) DO UPDATE SET "
-                    "invited_at = EXCLUDED.invited_at",
-                    (invitation.get("inviter_id"), invitation.get("invitee_id"), invitation.get("invited_at"))
-                )
+                inviter_id = invitation.get("inviter_id")
+                invitee_id = invitation.get("invitee_id")
+                
+                if inviter_id is None or invitee_id is None:
+                    logger.warning("ردیف دعوت با inviter_id یا invitee_id null نادیده گرفته شد")
+                    invitations_skipped += 1
+                    continue
+                    
+                try:
+                    cursor.execute(
+                        "INSERT INTO invitations (inviter_id, invitee_id, invited_at) "
+                        "VALUES (%s, %s, %s) ON CONFLICT (inviter_id, invitee_id) DO UPDATE SET "
+                        "invited_at = EXCLUDED.invited_at",
+                        (inviter_id, invitee_id, invitation.get("invited_at"))
+                    )
+                    invitations_inserted += 1
+                except Exception as e:
+                    logger.error(f"خطا در درج دعوت {inviter_id}-{invitee_id}: {str(e)}")
+                    invitations_skipped += 1
             
+            # درج داده‌های جدید - کانال‌ها
+            channels_inserted = 0
+            channels_skipped = 0
             for channel in backup_data.get("channels", []):
-                cursor.execute(
-                    "INSERT INTO channels (channel_id, channel_name, added_at) "
-                    "VALUES (%s, %s, %s) ON CONFLICT (channel_id) DO UPDATE SET "
-                    "channel_name = EXCLUDED.channel_name, added_at = EXCLUDED.added_at",
-                    (channel.get("channel_id"), channel.get("channel_name"), channel.get("added_at"))
-                )
+                channel_id_val = channel.get("channel_id")
+                if channel_id_val is None:
+                    logger.warning("ردیف کانال با channel_id null نادیده گرفته شد")
+                    channels_skipped += 1
+                    continue
+                    
+                try:
+                    cursor.execute(
+                        "INSERT INTO channels (channel_id, channel_name, added_at) "
+                        "VALUES (%s, %s, %s) ON CONFLICT (channel_id) DO UPDATE SET "
+                        "channel_name = EXCLUDED.channel_name, added_at = EXCLUDED.added_at",
+                        (channel_id_val, channel.get("channel_name"), channel.get("added_at"))
+                    )
+                    channels_inserted += 1
+                except Exception as e:
+                    logger.error(f"خطا در درج کانال {channel_id_val}: {str(e)}")
+                    channels_skipped += 1
             
             conn.commit()
 
         context.user_data["waiting_for_backup_file"] = False
-        await update.message.reply_text("✅ دیتابیس با موفقیت بازیابی شد!")
-        logger.info(f"دیتابیس توسط ادمین {user_id} بازیابی شد")
+        
+        # ارسال گزارش بازیابی
+        report_msg = (
+            f"✅ دیتابیس با موفقیت بازیابی شد!\n\n"
+            f"📊 گزارش بازیابی:\n"
+            f"👥 کاربران: {users_inserted} درج شدند، {users_skipped} نادیده گرفته شدند\n"
+            f"🏆 برندگان: {winners_inserted} درج شدند، {winners_skipped} نادیده گرفته شدند\n"
+            f"💸 پرداخت‌ها: {payments_inserted} درج شدند، {payments_skipped} نادیده گرفته شدند\n"
+            f"📩 دعوت‌ها: {invitations_inserted} درج شدند، {invitations_skipped} نادیده گرفته شدند\n"
+            f"📺 کانال‌ها: {channels_inserted} درج شدند، {channels_skipped} نادیده گرفته شدند"
+        )
+        
+        await update.message.reply_text(report_msg)
+        logger.info(f"دیتابیس توسط ادمین {user_id} بازیابی شد. گزارش: {report_msg}")
 
     except Exception as e:
         logger.error(f"خطا در بازیابی دیتابیس: {str(e)}")
@@ -888,7 +973,7 @@ async def start(update: Update, context: ContextTypes):
                 except Exception as e:
                     logger.error(f"خطا در ذخیره لینک دعوت برای کاربر {user.id}: {str(e)}")
             
-            # نمایش دکمه عضویت اینلاین
+            # نمایش دکته عضویت اینلاین
             channels = get_channels()
             if channels:
                 channel_links = "\n".join([f"• {channel_id}" for channel_id, channel_name in channels])
