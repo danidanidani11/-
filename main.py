@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 # متغیرهای محیطی
-TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN")
+TOKEN = os.getenv("BOT_TOKEN", "8078210260:AAEX-vz_apP68a6WhzaGhuAKK7amC1qUiEY")
 ADMIN_ID = int(os.getenv("ADMIN_ID", 5542927340))
 YOUR_ID = int(os.getenv("YOUR_ID", 123456789))
 DEFAULT_CHANNEL_ID = os.getenv("CHANNEL_ID", "@Charkhoun")
