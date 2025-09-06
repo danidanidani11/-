@@ -82,6 +82,7 @@ def init_db():
     try:
         with get_db_connection() as conn:
             cursor = conn.cursor()
+            # ایجاد جدول users و افزودن ستون is_new_user اگر وجود ندارد
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS users (
                     user_id BIGINT PRIMARY KEY,
@@ -95,6 +96,19 @@ def init_db():
                     pending_ref_id BIGINT,
                     is_new_user BOOLEAN DEFAULT TRUE
                 )
+            ''')
+            # افزودن ستون is_new_user اگر وجود ندارد
+            cursor.execute('''
+                DO $$ 
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT FROM pg_attribute 
+                        WHERE attrelid = 'users'::regclass 
+                        AND attname = 'is_new_user'
+                    ) THEN
+                        ALTER TABLE users ADD COLUMN is_new_user BOOLEAN DEFAULT TRUE;
+                    END IF;
+                END $$;
             ''')
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS channels (
@@ -149,10 +163,16 @@ def is_user_new(user_id: int) -> bool:
     try:
         with get_db_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT is_new_user FROM users WHERE user_id = %s", (user_id,))
-            result = cursor.fetchone()
+            # بررسی وجود ستون is_new_user
+            cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'is_new_user'")
+            has_is_new_user = cursor.fetchone() is not None
+            if has_is_new_user:
+                cursor.execute("SELECT is_new_user FROM users WHERE user_id = %s", (user_id,))
+                result = cursor.fetchone()
+                is_new = result[0] if result else True
+            else:
+                is_new = True  # اگر ستون وجود ندارد، فرض می‌کنیم کاربر جدید است
             conn.commit()
-            is_new = result[0] if result else True
             logger.debug(f"بررسی وضعیت کاربر {user_id}: is_new_user = {is_new}")
             return is_new
     except Exception as e:
@@ -193,12 +213,17 @@ def mark_user_as_old(user_id: int) -> None:
     try:
         with get_db_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute(
-                "UPDATE users SET is_new_user = FALSE WHERE user_id = %s",
-                (user_id,)
-            )
-            conn.commit()
-            logger.info(f"کاربر {user_id} به عنوان کاربر قدیمی علامت‌گذاری شد")
+            # بررسی وجود ستون is_new_user
+            cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'is_new_user'")
+            if cursor.fetchone():
+                cursor.execute(
+                    "UPDATE users SET is_new_user = FALSE WHERE user_id = %s",
+                    (user_id,)
+                )
+                conn.commit()
+                logger.info(f"کاربر {user_id} به عنوان کاربر قدیمی علامت‌گذاری شد")
+            else:
+                logger.warning(f"ستون is_new_user برای کاربر {user_id} وجود ندارد")
     except Exception as e:
         logger.error(f"خطا در mark_user_as_old برای کاربر {user_id}: {str(e)}")
 
@@ -476,8 +501,16 @@ async def debug(update: Update, context: ContextTypes):
             total_payments = cursor.fetchone()[0] or 0
             cursor.execute("SELECT COUNT(*) FROM channels")
             total_channels = cursor.fetchone()[0] or 0
-            cursor.execute("SELECT user_id, is_new_user FROM users LIMIT 5")
-            recent_users = cursor.fetchall()
+            
+            # بررسی وجود ستون is_new_user قبل از کوئری
+            cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'is_new_user'")
+            has_is_new_user = cursor.fetchone() is not None
+            if has_is_new_user:
+                cursor.execute("SELECT user_id, is_new_user FROM users LIMIT 5")
+                recent_users = cursor.fetchall()
+            else:
+                cursor.execute("SELECT user_id, username FROM users LIMIT 5")
+                recent_users = [(row[0], False) for row in cursor.fetchall()]  # اگر ستون وجود ندارد، فرض می‌کنیم همه قدیمی هستند
             conn.commit()
 
         msg += (
