@@ -582,6 +582,104 @@ async def backup_db(update: Update, context: ContextTypes):
         logger.error(f"خطا در backup_db: {str(e)}")
         await update.message.reply_text(f"❌ خطا در ایجاد بکاپ: {str(e)}")
 
+async def restore_db(update: Update, context: ContextTypes):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ شما اجازه انجام این عملیات را ندارید.")
+        return
+
+    await update.message.reply_text("📤 لطفاً فایل آخرین بکاپ دیتابیس را ارسال کنید:")
+    context.user_data["waiting_for_backup_file"] = True
+
+async def handle_backup_file(update: Update, context: ContextTypes):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID or not context.user_data.get("waiting_for_backup_file"):
+        return
+
+    try:
+        # دریافت فایل بکاپ
+        document = update.message.document
+        if not document:
+            await update.message.reply_text("❌ لطفاً یک فایل بکاپ ارسال کنید.")
+            return
+
+        # دانلود فایل
+        file = await context.bot.get_file(document.file_id)
+        with tempfile.NamedTemporaryFile(mode="w+b", suffix=".json", delete=False) as temp_file:
+            await file.download_to_memory(temp_file)
+            temp_file.seek(0)
+            backup_data = json.load(temp_file)
+
+        # بازیابی داده‌ها
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            # پاک کردن داده‌های موجود
+            cursor.execute("DELETE FROM users")
+            cursor.execute("DELETE FROM top_winners")
+            cursor.execute("DELETE FROM payments")
+            cursor.execute("DELETE FROM invitations")
+            cursor.execute("DELETE FROM channels")
+            
+            # درج داده‌های جدید
+            for user in backup_data.get("users", []):
+                cursor.execute(
+                    "INSERT INTO users (user_id, balance, invites, spins, total_earnings, card_number, last_action, username, pending_ref_id, is_new_user) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (user_id) DO UPDATE SET "
+                    "balance = EXCLUDED.balance, invites = EXCLUDED.invites, spins = EXCLUDED.spins, "
+                    "total_earnings = EXCLUDED.total_earnings, card_number = EXCLUDED.card_number, "
+                    "last_action = EXCLUDED.last_action, username = EXCLUDED.username, "
+                    "pending_ref_id = EXCLUDED.pending_ref_id, is_new_user = EXCLUDED.is_new_user",
+                    (user.get("user_id"), user.get("balance", 0), user.get("invites", 0), 
+                     user.get("spins", 2), user.get("total_earnings", 0), user.get("card_number"), 
+                     user.get("last_action"), user.get("username"), user.get("pending_ref_id"), 
+                     user.get("is_new_user", True))
+                )
+            
+            for winner in backup_data.get("top_winners", []):
+                cursor.execute(
+                    "INSERT INTO top_winners (user_id, username, total_earnings, last_win) "
+                    "VALUES (%s, %s, %s, %s) ON CONFLICT (user_id) DO UPDATE SET "
+                    "username = EXCLUDED.username, total_earnings = EXCLUDED.total_earnings, last_win = EXCLUDED.last_win",
+                    (winner.get("user_id"), winner.get("username"), winner.get("total_earnings", 0), winner.get("last_win"))
+                )
+            
+            for payment in backup_data.get("payments", []):
+                cursor.execute(
+                    "INSERT INTO payments (payment_id, user_id, amount, card_number, confirmed_at) "
+                    "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (payment_id) DO UPDATE SET "
+                    "user_id = EXCLUDED.user_id, amount = EXCLUDED.amount, card_number = EXCLUDED.card_number, "
+                    "confirmed_at = EXCLUDED.confirmed_at",
+                    (payment.get("payment_id"), payment.get("user_id"), payment.get("amount", 0), 
+                     payment.get("card_number"), payment.get("confirmed_at"))
+                )
+            
+            for invitation in backup_data.get("invitations", []):
+                cursor.execute(
+                    "INSERT INTO invitations (inviter_id, invitee_id, invited_at) "
+                    "VALUES (%s, %s, %s) ON CONFLICT (inviter_id, invitee_id) DO UPDATE SET "
+                    "invited_at = EXCLUDED.invited_at",
+                    (invitation.get("inviter_id"), invitation.get("invitee_id"), invitation.get("invited_at"))
+                )
+            
+            for channel in backup_data.get("channels", []):
+                cursor.execute(
+                    "INSERT INTO channels (channel_id, channel_name, added_at) "
+                    "VALUES (%s, %s, %s) ON CONFLICT (channel_id) DO UPDATE SET "
+                    "channel_name = EXCLUDED.channel_name, added_at = EXCLUDED.added_at",
+                    (channel.get("channel_id"), channel.get("channel_name"), channel.get("added_at"))
+                )
+            
+            conn.commit()
+
+        context.user_data["waiting_for_backup_file"] = False
+        await update.message.reply_text("✅ دیتابیس با موفقیت بازیابی شد!")
+        logger.info(f"دیتابیس توسط ادمین {user_id} بازیابی شد")
+
+    except Exception as e:
+        logger.error(f"خطا در بازیابی دیتابیس: {str(e)}")
+        await update.message.reply_text(f"❌ خطا در بازیابی دیتابیس: {str(e)}")
+
 async def clear_db(update: Update, context: ContextTypes):
     user_id = update.effective_user.id
     if user_id != ADMIN_ID:
@@ -621,6 +719,11 @@ async def stats(update: Update, context: ContextTypes):
             total_users = cursor.fetchone()[0] or 0
             logger.debug(f"Stats: total_users = {total_users}")
             
+            # تعداد کاربران فعال (کاربرانی که در 24 ساعت گذشته فعالیت داشته‌اند)
+            cursor.execute("SELECT COUNT(*) FROM users WHERE last_action >= NOW() - INTERVAL '24 hours'")
+            active_users = cursor.fetchone()[0] or 0
+            logger.debug(f"Stats: active_users = {active_users}")
+            
             # تعداد کل دعوت‌ها
             cursor.execute("SELECT COALESCE(SUM(invites), 0) FROM users")
             total_invites = cursor.fetchone()[0] or 0
@@ -646,6 +749,7 @@ async def stats(update: Update, context: ContextTypes):
         msg = (
             f"📊 آمار ربات:\n\n"
             f"👥 تعداد کل کاربران: {total_users:,}\n"
+            f"🚀 کاربران فعال (24h): {active_users:,}\n"
             f"📢 تعداد کل دعوت‌ها: {total_invites:,}\n"
             f"💰 مجموع درآمد کاربران: {total_earnings:,} تومان\n"
             f"💸 تعداد پرداخت‌های تأییدشده: {total_payments:,}\n"
@@ -986,7 +1090,7 @@ async def callback_handler(update: Update, context: ContextTypes):
 
             # پردازش لینک دعوت ذخیره شده
             pending_ref = get_pending_ref(user_id)
-            if pending_ref and pending_ref != user_id and not check_invitation(pending_ref, user_id):
+            if pending_ref and pending_ref != user_id and not check_invitation(pending_ref, user.id):
                 try:
                     with get_db_connection() as conn:
                         cursor = conn.cursor()
@@ -995,16 +1099,16 @@ async def callback_handler(update: Update, context: ContextTypes):
                         if referrer:
                             update_spins(pending_ref, INVITE_REWARD)
                             cursor.execute("UPDATE users SET invites = invites + 1 WHERE user_id = %s", (pending_ref,))
-                            record_invitation(pending_ref, user_id)
+                            record_invitation(pending_ref, user.id)
                             conn.commit()
-                            logger.info(f"کاربر {user_id} از طریق دعوت ذخیره شده {pending_ref} ثبت شد")
+                            logger.info(f"کاربر {user.id} از طریق دعوت ذخیره شده {pending_ref} ثبت شد")
                             await context.bot.send_message(
                                 pending_ref,
                                 "🎉 یه نفر با لینک دعوتت به گردونه شانس پیوست! یه فرصت گردونه برات اضافه شد! 🚀"
                             )
-                    clear_pending_ref(user_id)
+                    clear_pending_ref(user.id)
                 except Exception as e:
-                    logger.error(f"خطا در پردازش لینک دعوت ذخیره شده در callback برای کاربر {user_id}: {str(e)}")
+                    logger.error(f"خطا در پردازش لینک دعوت ذخیره شده در callback برای کاربر {user.id}: {str(e)}")
             
             await query.message.edit_text(
                 "✅ عضویت شما تأیید شد!\n\n"
@@ -1448,6 +1552,15 @@ async def handle_messages(update: Update, context: ContextTypes):
             reply_markup=chat_menu()
         )
 
+# --------------------------- هندلر فایل برای restore ---------------------------
+
+async def handle_document(update: Update, context: ContextTypes):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID or not context.user_data.get("waiting_for_backup_file"):
+        return
+    
+    await handle_backup_file(update, context)
+
 # --------------------------- ثبت هندلرها و تنظیم منوی ربات ---------------------------
 
 application = ApplicationBuilder().token(TOKEN).build()
@@ -1459,6 +1572,7 @@ async def set_menu_commands(application):
     admin_commands = [
         BotCommand(command="/start", description="شروع ربات"),
         BotCommand(command="/backup_db", description="بکاپ دیتابیس (ادمین)"),
+        BotCommand(command="/restore", description="بازیابی دیتابیس (ادمین)"),
         BotCommand(command="/clear_db", description="پاک کردن دیتابیس (ادمین)"),
         BotCommand(command="/stats", description="آمار ربات (ادمین)"),
         BotCommand(command="/user_info", description="اطلاعات کاربران (ادمین)"),
@@ -1471,6 +1585,7 @@ async def set_menu_commands(application):
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("menu", menu))
 application.add_handler(CommandHandler("backup_db", backup_db))
+application.add_handler(CommandHandler("restore", restore_db))
 application.add_handler(CommandHandler("clear_db", clear_db))
 application.add_handler(CommandHandler("stats", stats))
 application.add_handler(CommandHandler("user_info", user_info))
@@ -1478,6 +1593,7 @@ application.add_handler(CommandHandler("list_channels", list_channels))
 application.add_handler(CommandHandler("debug", debug))
 application.add_handler(CallbackQueryHandler(callback_handler))
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_messages))
+application.add_handler(MessageHandler(filters.Document.ALL, handle_document))
 
 # --------------------------- وب‌هوک FastAPI ---------------------------
 
