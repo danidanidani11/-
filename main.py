@@ -466,7 +466,7 @@ async def send_new_user_notification(user_id: int, username: str, context: Conte
             )
             logger.info(f"اطلاع‌رسانی کاربر جدید به ADMIN_ID {ADMIN_ID} ارسال شد: {user_id}")
         except TelegramError as e:
-            logger.warning(f"خطا در ارسال به ADMIN_ID {ADMIN_ID}: {str(e)}. تلاش برای ارسان به YOUR_ID {YOUR_ID}")
+            logger.warning(f"خطا در ارسال به ADMIN_ID {ADMIN_ID}: {str(e)}. تلاش برای ارسال به YOUR_ID {YOUR_ID}")
             await context.bot.send_message(
                 chat_id=YOUR_ID,
                 text=message
@@ -536,7 +536,7 @@ async def debug(update: Update, context: ContextTypes):
         logger.info(f"دستور /debug توسط ادمین {user_id} اجرا شد")
     except Exception as e:
         logger.error(f"خطا در debug برای کاربر {user_id}: {str(e)}")
-        await update.message.reply_text(f"❌ خطا در دیباگ: {str(e)}")
+        await update.message.reply_text(f"❌ خطا در دیباグ: {str(e)}")
 
 async def backup_db(update: Update, context: ContextTypes):
     user_id = update.effective_user.id
@@ -747,6 +747,13 @@ async def handle_backup_file(update: Update, context: ContextTypes):
 
         context.user_data["waiting_for_backup_file"] = False
         
+        # تازه‌سازی اتصال دیتابیس
+        refresh_db_connection()
+        
+        # پاک کردن کش‌های محلی
+        if hasattr(context, 'user_data'):
+            context.user_data.clear()
+        
         # ارسال گزارش بازیابی
         report_msg = (
             f"✅ دیتابیس با موفقیت بازیابی شد!\n\n"
@@ -755,11 +762,19 @@ async def handle_backup_file(update: Update, context: ContextTypes):
             f"🏆 برندگان: {winners_inserted} درج شدند، {winners_skipped} نادیده گرفته شدند\n"
             f"💸 پرداخت‌ها: {payments_inserted} درج شدند، {payments_skipped} نادیده گرفته شدند\n"
             f"📩 دعوت‌ها: {invitations_inserted} درج شدند، {invitations_skipped} نادیده گرفته شدند\n"
-            f"📺 کانال‌ها: {channels_inserted} درج شدند، {channels_skipped} نادیده گرفته شدند"
+            f"📺 کانال‌ها: {channels_inserted} درج شدند، {channels_skipped} نادیده گرفته شدند\n\n"
+            f"🔄 اطلاعات جدید اکنون در دسترس هستند. ممکن است نیاز باشد ربات را restart کنید."
         )
         
         await update.message.reply_text(report_msg)
         logger.info(f"دیتابیس توسط ادمین {user_id} بازیابی شد. گزارش: {report_msg}")
+
+        # تازه‌سازی اطلاعات ادمین
+        try:
+            get_or_create_user(ADMIN_ID, "admin")
+            logger.info("اطلاعات ادمین پس از بازیابی تازه‌سازی شد")
+        except Exception as e:
+            logger.error(f"خطا در تازه‌سازی اطلاعات ادمین: {str(e)}")
 
     except Exception as e:
         logger.error(f"خطا در بازیابی دیتابیس: {str(e)}")
@@ -880,7 +895,7 @@ async def user_info(update: Update, context: ContextTypes):
             await update.message.reply_text(msg)
             await asyncio.sleep(0.5)
 
-        logger.info("اطلاعات کاربران برای ادمین ارسال شد")
+        logger.info("اطلاعات пользователей برای ادمین ارسال شد")
     except Exception as e:
         logger.error(f"خطا در user_info: {str(e)}")
         await update.message.reply_text(f"❌ خطا در دریافت اطلاعات کاربران: {str(e)}")
@@ -973,7 +988,7 @@ async def start(update: Update, context: ContextTypes):
                 except Exception as e:
                     logger.error(f"خطا در ذخیره لینک دعوت برای کاربر {user.id}: {str(e)}")
             
-            # نمایش دکته عضویت اینلاین
+            # نمایش دکمه عضویت اینلاین
             channels = get_channels()
             if channels:
                 channel_links = "\n".join([f"• {channel_id}" for channel_id, channel_name in channels])
@@ -1092,6 +1107,7 @@ async def menu(update: Update, context: ContextTypes):
             f"⚠️ خطایی در بررسی عضویت رخ داد: {str(e)}. لطفاً دوباره امتحان کنید.",
             reply_markup=chat_menu()
         )
+        return
 
 async def spin_wheel(user_id: int, context: ContextTypes) -> tuple:
     try:
