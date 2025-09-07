@@ -29,13 +29,25 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 # متغیرهای محیطی
-TOKEN = os.getenv("BOT_TOKEN", "8078210260:AAEX-vz_apP68a6WhzaGhuAKK7amC1qUiEY")
-ADMIN_ID = int(os.getenv("ADMIN_ID", 5542927340))
-YOUR_ID = int(os.getenv("YOUR_ID", 123456789))
+TOKEN = os.getenv("BOT_TOKEN")
+ADMIN_ID = os.getenv("ADMIN_ID")
+YOUR_ID = os.getenv("YOUR_ID")
 DEFAULT_CHANNEL_ID = os.getenv("CHANNEL_ID", "@Charkhoun")
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://charkhon_user:grMZtPEdreHgfbZrmSnrueTjgpvTzdk2@dpg-d2sislggjchc73aeb7og-a/charkhon")
-WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://0kik4x8alj.onrender.com")
+DATABASE_URL = os.getenv("DATABASE_URL")
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 STRICT_MEMBERSHIP = os.getenv("STRICT_MEMBERSHIP", "true").lower() == "true"
+
+# بررسی متغیرهای محیطی
+if not all([TOKEN, ADMIN_ID, YOUR_ID, DATABASE_URL, WEBHOOK_URL]):
+    logger.error("یکی از متغیرهای محیطی تنظیم نشده است!")
+    raise ValueError("لطفاً متغیرهای محیطی BOT_TOKEN, ADMIN_ID, YOUR_ID, DATABASE_URL و WEBHOOK_URL را تنظیم کنید.")
+
+try:
+    ADMIN_ID = int(ADMIN_ID)
+    YOUR_ID = int(YOUR_ID)
+except ValueError:
+    logger.error("ADMIN_ID یا YOUR_ID باید عدد باشند!")
+    raise ValueError("ADMIN_ID و YOUR_ID باید مقادیر عددی معتبر باشند.")
 
 SPIN_COST = 0
 INVITE_REWARD = 1
@@ -1664,8 +1676,9 @@ async def setup_application():
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_messages))
         
         # تنظیم وب‌هوک
-        await app.bot.set_webhook(f"{WEBHOOK_URL}/{TOKEN}")
-        logger.info(f"وب‌هوک تنظیم شد: {WEBHOOK_URL}/{TOKEN}")
+        webhook_url = f"{WEBHOOK_URL}/{TOKEN}"
+        await app.bot.set_webhook(webhook_url)
+        logger.info(f"وب‌هوک تنظیم شد: {webhook_url}")
         
         return app
     except Exception as e:
@@ -1677,11 +1690,20 @@ async def webhook(request: Request):
     try:
         app = await setup_application()
         update = Update.de_json(await request.json(), app.bot)
-        await app.process_update(update)
-        return {"status": "ok"}
+        if update:
+            await app.process_update(update)
+            logger.debug("وب‌هوک با موفقیت پردازش شد")
+            return {"status": "ok"}
+        else:
+            logger.error("داده‌های وب‌هوک نامعتبر است")
+            return {"status": "error", "message": "Invalid webhook data"}
     except Exception as e:
         logger.error(f"خطا در پردازش وب‌هوک: {str(e)}")
         return {"status": "error", "message": str(e)}
+
+@app.get("/")
+async def health_check():
+    return {"status": "healthy"}
 
 if __name__ == "__main__":
     import uvicorn
