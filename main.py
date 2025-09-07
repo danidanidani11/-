@@ -82,7 +82,6 @@ def init_db():
     try:
         with get_db_connection() as conn:
             cursor = conn.cursor()
-            # ایجاد جدول users و افزودن ستون is_new_user اگر وجود ندارد
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS users (
                     user_id BIGINT PRIMARY KEY,
@@ -153,8 +152,7 @@ def init_db():
         logger.error(f"خطا در مقداردهی دیتابیس: {str(e)}")
         raise
 
-# --------------------------- توابع کمکی ---------------------------
-
+# توابع کمکی
 def is_user_new(user_id: int) -> bool:
     try:
         with get_db_connection() as conn:
@@ -465,8 +463,7 @@ async def send_new_user_notification(user_id: int, username: str, context: Conte
     except Exception as e:
         logger.error(f"خطا در ارسال اطلاع‌رسانی کاربر جدید برای کاربر {user_id}: {str(e)}")
 
-# --------------------------- دستورات ادمین ---------------------------
-
+# دستورات ادمین
 async def debug(update: Update, context: ContextTypes):
     user_id = update.effective_user.id
     if user_id != ADMIN_ID:
@@ -598,7 +595,6 @@ async def handle_backup_file(update: Update, context: ContextTypes):
 
         with get_db_connection() as conn:
             cursor = conn.cursor()
-            # پاک کردن داده‌های موجود
             cursor.execute("DELETE FROM users")
             cursor.execute("DELETE FROM top_winners")
             cursor.execute("DELETE FROM payments")
@@ -645,7 +641,7 @@ async def handle_backup_file(update: Update, context: ContextTypes):
                 except Exception as e:
                     logger.error(f"خطا در درج کاربر {user_id_val}: {str(e)}")
                     users_skipped += 1
-                    continue  # ادامه دادن به جای توقف
+                    continue
 
             winners_inserted = 0
             winners_skipped = 0
@@ -800,7 +796,6 @@ async def clear_db(update: Update, context: ContextTypes):
         logger.error(f"خطا در clear_db: {str(e)}")
         await update.message.reply_text(f"❌ خطا در پاک کردن دیتابیس: {str(e)}")
 
-@retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
 async def stats(update: Update, context: ContextTypes):
     user_id = update.effective_user.id
     if user_id != ADMIN_ID:
@@ -900,8 +895,7 @@ async def list_channels(update: Update, context: ContextTypes):
     ]
     await update.message.reply_text(msg, reply_markup=InlineKeyboardMarkup(keyboard))
 
-# --------------------------- کیبوردها ---------------------------
-
+# کیبوردها
 def chat_menu():
     keyboard = [
         [KeyboardButton("🎯 چرخوندن گردونه"), KeyboardButton("💰 موجودی")],
@@ -932,10 +926,7 @@ def remove_channel_keyboard(channels):
     keyboard = [[InlineKeyboardButton(f"حذف {channel_name} ({channel_id})", callback_data=f"delete_channel_{channel_id}")]
                 for channel_id, channel_name in channels]
     keyboard.append([InlineKeyboardButton("🔙 بازگشت", callback_data="back_to_channel_menu")])
-    return InlineKeyboardMarkup(keyboard)
-
-# --------------------------- هندلرها ---------------------------
-
+    return InlineKeyboardMarkup(keyboard)# هندلرها
 async def start(update: Update, context: ContextTypes):
     user = update.effective_user
     logger.debug(f"دستور /start توسط کاربر {user.id} اجرا شد")
@@ -1161,7 +1152,7 @@ async def callback_handler(update: Update, context: ContextTypes):
                 logger.debug(f"کاربر {user_id} اطلاع‌رسانی شد و به عنوان قدیمی علامت‌گذاری شد")
 
             pending_ref = get_pending_ref(user_id)
-            if pending_ref and pending_ref != user_id and not check_invitation(pending_ref, user.id):
+            if pending_ref and pending_ref != user_id and not check_invitation(pending_ref, user_id):
                 try:
                     with get_db_connection() as conn:
                         cursor = conn.cursor()
@@ -1170,16 +1161,16 @@ async def callback_handler(update: Update, context: ContextTypes):
                         if referrer:
                             update_spins(pending_ref, INVITE_REWARD)
                             cursor.execute("UPDATE users SET invites = invites + 1 WHERE user_id = %s", (pending_ref,))
-                            record_invitation(pending_ref, user.id)
+                            record_invitation(pending_ref, user_id)
                             conn.commit()
-                            logger.info(f"کاربر {user.id} از طریق دعوت ذخیره شده {pending_ref} ثبت شد")
+                            logger.info(f"کاربر {user_id} از طریق دعوت ذخیره شده {pending_ref} ثبت شد")
                             await context.bot.send_message(
                                 pending_ref,
                                 "🎉 یه نفر با لینک دعوتت به گردونه شانس پیوست! یه فرصت گردونه برات اضافه شد! 🚀"
                             )
-                clear_pending_ref(user.id)
+                clear_pending_ref(user_id)
                 except Exception as e:
-                    logger.error(f"خطا در پردازش لینک دعوت ذخیره شده در callback برای کاربر {user.id}: {str(e)}")
+                    logger.error(f"خطا در پردازش لینک دعوت ذخیره شده در callback برای کاربر {user_id}: {str(e)}")
             
             await query.message.edit_text(
                 "✅ عضویت شما تأیید شد!\n\n"
@@ -1581,7 +1572,7 @@ async def handle_messages(update: Update, context: ContextTypes):
                 member = await context.bot.get_chat_member(channel_id, context.bot.id)
                 if member.status not in ['administrator', 'creator']:
                     await update.message.reply_text(
-                        "❌ ربات در کانال ادمین نیست. لطفاً ربات را ادمین کنید و دوباره امتحان کنید.",
+                        f"❌ ربات در کانال {channel_id} ادمین نیست. لطفاً ربات را ادمین کنید و دوباره امتحان کنید.",
                         reply_markup=back_button()
                     )
                     context.user_data["waiting_for_channel_id"] = True
@@ -1601,20 +1592,26 @@ async def handle_messages(update: Update, context: ContextTypes):
                     ]
                     await update.message.reply_text(
                         f"✅ کانال {channel_id} با موفقیت اضافه شد.\n\n{msg}",
-                        reply_markup=InlineKeyboard                    Markup(keyboard)
-                )
-                context.user_data.clear()
-            else:
+                        reply_markup=InlineKeyboardMarkup(keyboard)
+                    )
+                else:
+                    await update.message.reply_text(
+                        f"❌ خطا در افزودن کانال {channel_id}.",
+                        reply_markup=back_button()
+                    )
+            except TelegramError as e:
+                logger.error(f"خطای تلگرام در افزودن کانال {channel_id}: {str(e)}")
                 await update.message.reply_text(
-                    f"❌ خطا در افزودن کانال {channel_id}. لطفاً دوباره امتحان کنید.",
+                    f"❌ خطا در افزودن کانال: {str(e)}. لطفاً مطمئن شوید آیدی کانال درست است و ربات ادمین است.",
                     reply_markup=back_button()
                 )
-
-        else:
-            await update.message.reply_text(
-                "❌ دستور نامعتبر. لطفاً از منو انتخاب کنید.",
-                reply_markup=chat_menu()
-            )
+                context.user_data["waiting_for_channel_id"] = True
+            except Exception as e:
+                logger.error(f"خطای غیرمنتظره در افزودن کانال {channel_id}: {str(e)}")
+                await update.message.reply_text(
+                    f"❌ خطای غیرمنتظره: {str(e)}. لطفاً دوباره امتحان کنید.",
+                    reply_markup=back_button()
+                )
 
     except Exception as e:
         logger.error(f"خطا در handle_messages برای کاربر {user_id}: {str(e)}")
@@ -1623,56 +1620,31 @@ async def handle_messages(update: Update, context: ContextTypes):
             reply_markup=chat_menu()
         )
 
-# --------------------------- تنظیمات ربات ---------------------------
-
-async def error_handler(update: Update, context: ContextTypes):
-    logger.error(f"خطا در به‌روزرسانی: {str(context.error)}")
+# تنظیم وب‌هوک و اجرای ربات
+async def setup_application():
     try:
-        if update and update.effective_message:
-            await update.effective_message.reply_text(
-                "⚠️ خطایی رخ داد. لطفاً دوباره امتحان کنید یا با پشتیبانی تماس بگیرید.",
-                reply_markup=chat_menu()
-            )
-    except Exception as e:
-        logger.error(f"خطا در error_handler: {str(e)}")
-
-async def set_commands(context: ContextTypes):
-    try:
-        default_commands = [
+        app = ApplicationBuilder().token(TOKEN).build()
+        init_db()
+        
+        # تنظیم دستورات
+        commands = [
             BotCommand("start", "شروع ربات"),
             BotCommand("menu", "نمایش منوی اصلی")
         ]
-        admin_commands = default_commands + [
+        admin_commands = [
             BotCommand("debug", "نمایش اطلاعات دیباگ"),
-            BotCommand("backup_db", "ایجاد بکاپ از دیتابیس"),
+            BotCommand("backup_db", "گرفتن بکاپ از دیتابیس"),
             BotCommand("restore_db", "بازیابی دیتابیس"),
             BotCommand("clear_db", "پاک کردن دیتابیس"),
             BotCommand("stats", "نمایش آمار ربات"),
             BotCommand("user_info", "نمایش اطلاعات کاربران"),
             BotCommand("list_channels", "نمایش کانال‌های اجباری")
         ]
-        await context.bot.set_my_commands(default_commands, scope=BotCommandScopeDefault())
-        await context.bot.set_my_commands(admin_commands, scope=BotCommandScopeChat(chat_id=ADMIN_ID))
-        logger.info("دستورات ربات با موفقیت تنظیم شدند")
-    except Exception as e:
-        logger.error(f"خطا در تنظیم دستورات: {str(e)}")
-
-# --------------------------- راه‌اندازی وب‌هوک ---------------------------
-
-async def webhook(request: Request):
-    try:
-        update = Update.de_json(await request.json(), app.bot)
-        await app.update_queue.put(update)
-        return {"status": "ok"}
-    except Exception as e:
-        logger.error(f"خطا در وب‌هوک: {str(e)}")
-        return {"status": "error", "message": str(e)}
-
-async def main():
-    try:
-        init_db()
-        app = ApplicationBuilder().token(TOKEN).build()
-
+        
+        await app.bot.set_my_commands(commands, scope=BotCommandScopeDefault())
+        await app.bot.set_my_commands(admin_commands, scope=BotCommandScopeChat(chat_id=ADMIN_ID))
+        
+        # اضافه کردن هندلرها
         app.add_handler(CommandHandler("start", start))
         app.add_handler(CommandHandler("menu", menu))
         app.add_handler(CommandHandler("debug", debug))
@@ -1683,28 +1655,34 @@ async def main():
         app.add_handler(CommandHandler("user_info", user_info))
         app.add_handler(CommandHandler("list_channels", list_channels))
         app.add_handler(CallbackQueryHandler(callback_handler))
-        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_messages))
         app.add_handler(MessageHandler(filters.Document.ALL, handle_backup_file))
-        app.add_error_handler(error_handler)
-
-        await set_commands(app)
+        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_messages))
+        
+        # تنظیم وب‌هوک
         await app.bot.set_webhook(f"{WEBHOOK_URL}/{TOKEN}")
-        logger.info("وب‌هوک با موفقیت تنظیم شد")
-
-        async with app:
-            await app.start()
-            await app.run_webhook(
-                listen="0.0.0.0",
-                port=int(os.getenv("PORT", 8000)),
-                webhook_url=f"{WEBHOOK_URL}/{TOKEN}",
-                allowed_updates=Update.ALL_TYPES
-            )
-            await app.stop()
-
+        logger.info(f"وب‌هوک تنظیم شد: {WEBHOOK_URL}/{TOKEN}")
+        
+        return app
     except Exception as e:
-        logger.error(f"خطا در راه‌اندازی ربات: {str(e)}")
+        logger.error(f"خطا در تنظیم اپلیکیشن: {str(e)}")
         raise
+
+@app.post(f"/{TOKEN}")
+async def webhook(request: Request):
+    try:
+        app = await setup_application()
+        update = Update.de_json(await request.json(), app.bot)
+        await app.process_update(update)
+        return {"status": "ok"}
+    except Exception as e:
+        logger.error(f"خطا در پردازش وب‌هوک: {str(e)}")
+        return {"status": "error", "message": str(e)}
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
+    try:
+        logger.info("شروع ربات...")
+        init_db()
+        uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
+    except Exception as e:
+        logger.error(f"خطا در اجرای ربات: {str(e)}")
