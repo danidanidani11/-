@@ -1033,7 +1033,7 @@ async def start(update: Update, context: ContextTypes):
                 clear_pending_ref(user.id)
             except Exception as e:
                 logger.error(f"خطا در پردازش لینک دعوت ذخیره شده برای کاربر {user.id}: {str(e)}")
-
+        
         if is_user_new(user.id):
             await send_new_user_notification(user.id, user.username, context)
             mark_user_as_old(user.id)
@@ -1146,14 +1146,14 @@ async def callback_handler(update: Update, context: ContextTypes):
                     )
                 return
             
-            if is_user_new(user_id):
-                await send_new_user_notification(user_id, query.from_user.username, context)
-                mark_user_as_old(user_id)
-                logger.debug(f"کاربر {user_id} اطلاع‌رسانی شد و به عنوان قدیمی علامت‌گذاری شد")
+            try:
+                if is_user_new(user_id):
+                    await send_new_user_notification(user_id, query.from_user.username, context)
+                    mark_user_as_old(user_id)
+                    logger.debug(f"کاربر {user_id} اطلاع‌رسانی شد و به عنوان قدیمی علامت‌گذاری شد")
 
-            pending_ref = get_pending_ref(user_id)
-            if pending_ref and pending_ref != user_id and not check_invitation(pending_ref, user_id):
-                try:
+                pending_ref = get_pending_ref(user_id)
+                if pending_ref and pending_ref != user_id and not check_invitation(pending_ref, user_id):
                     with get_db_connection() as conn:
                         cursor = conn.cursor()
                         cursor.execute("SELECT user_id FROM users WHERE user_id = %s", (pending_ref,))
@@ -1168,9 +1168,14 @@ async def callback_handler(update: Update, context: ContextTypes):
                                 pending_ref,
                                 "🎉 یه نفر با لینک دعوتت به گردونه شانس پیوست! یه فرصت گردونه برات اضافه شد! 🚀"
                             )
-                clear_pending_ref(user_id)
-                except Exception as e:
-                    logger.error(f"خطا در پردازش لینک دعوت ذخیره شده در callback برای کاربر {user_id}: {str(e)}")
+                    clear_pending_ref(user_id)
+            except Exception as e:
+                logger.error(f"خطا در پردازش لینک دعوت ذخیره شده در callback برای کاربر {user_id}: {str(e)}")
+                await query.message.reply_text(
+                    f"❌ خطایی رخ داد: {str(e)}. لطفاً دوباره امتحان کنید.",
+                    reply_markup=chat_menu()
+                )
+                return
             
             await query.message.edit_text(
                 "✅ عضویت شما تأیید شد!\n\n"
