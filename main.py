@@ -266,7 +266,8 @@ def record_payment(user_id: int, amount: int, card_number: str) -> int:
             return payment_id
     except Exception as e:
         logger.error(f"خطا در record_payment برای کاربر {user_id}: {str(e)}")
-        return 0def check_invitation(inviter_id: int, invitee_id: int) -> bool:
+        return 0
+        def check_invitation(inviter_id: int, invitee_id: int) -> bool:
     try:
         with get_db_connection() as conn:
             cursor = conn.cursor()
