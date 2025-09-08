@@ -18,7 +18,7 @@ from datetime import datetime
 import asyncio
 import tempfile
 
-# تنظیم لاگ‌ها برای دیباگ بهتر
+# تنظیم لاگ‌ها
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.DEBUG
@@ -68,21 +68,10 @@ def check_db_connectivity():
         logger.error(f"خطا در بررسی اتصال دیتابیس: {str(e)}")
         return False
 
-def refresh_db_connection():
-    try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT 1")
-            conn.commit()
-            logger.info("اتصال دیتابیس تازه‌سازی شد")
-    except Exception as e:
-        logger.error(f"خطا در تازه‌سازی اتصال دیتابیس: {str(e)}")
-
 def init_db():
     try:
         with get_db_connection() as conn:
             cursor = conn.cursor()
-            # ایجاد جدول users و افزودن ستون is_new_user اگر وجود ندارد
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS users (
                     user_id BIGINT PRIMARY KEY,
@@ -96,19 +85,6 @@ def init_db():
                     pending_ref_id BIGINT,
                     is_new_user BOOLEAN DEFAULT TRUE
                 )
-            ''')
-            # افزودن ستون is_new_user اگر وجود ندارد
-            cursor.execute('''
-                DO $$ 
-                BEGIN
-                    IF NOT EXISTS (
-                        SELECT FROM pg_attribute 
-                        WHERE attrelid = 'users'::regclass 
-                        AND attname = 'is_new_user'
-                    ) THEN
-                        ALTER TABLE users ADD COLUMN is_new_user BOOLEAN DEFAULT TRUE;
-                    END IF;
-                END $$;
             ''')
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS channels (
@@ -142,42 +118,17 @@ def init_db():
                     PRIMARY KEY (inviter_id, invitee_id)
                 )
             ''')
-            
-            # اضافه کردن کانال پیش‌فرض اگر وجود ندارد
             cursor.execute("SELECT 1 FROM channels WHERE channel_id = %s", (DEFAULT_CHANNEL_ID,))
             if not cursor.fetchone():
                 cursor.execute(
                     "INSERT INTO channels (channel_id, channel_name) VALUES (%s, %s)",
                     (DEFAULT_CHANNEL_ID, "کانال اصلی")
                 )
-            
             conn.commit()
             logger.info("دیتابیس با موفقیت مقداردهی شد")
     except Exception as e:
         logger.error(f"خطا در مقداردهی دیتابیس: {str(e)}")
         raise
-
-# --------------------------- توابع کمکی ---------------------------
-
-def is_user_new(user_id: int) -> bool:
-    try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            # بررسی وجود ستون is_new_user
-            cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'is_new_user'")
-            has_is_new_user = cursor.fetchone() is not None
-            if has_is_new_user:
-                cursor.execute("SELECT is_new_user FROM users WHERE user_id = %s", (user_id,))
-                result = cursor.fetchone()
-                is_new = result[0] if result else True
-            else:
-                is_new = True  # اگر ستون وجود ندارد، فرض می‌کنیم کاربر جدید است
-            conn.commit()
-            logger.debug(f"بررسی وضعیت کاربر {user_id}: is_new_user = {is_new}")
-            return is_new
-    except Exception as e:
-        logger.error(f"خطا در is_user_new برای کاربر {user_id}: {str(e)}")
-        return True
 
 def get_or_create_user(user_id: int, username: str = None) -> None:
     try:
@@ -209,21 +160,30 @@ def get_or_create_user(user_id: int, username: str = None) -> None:
         logger.error(f"خطا در get_or_create_user برای کاربر {user_id}: {str(e)}")
         raise
 
+def is_user_new(user_id: int) -> bool:
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT is_new_user FROM users WHERE user_id = %s", (user_id,))
+            result = cursor.fetchone()
+            is_new = result[0] if result else True
+            conn.commit()
+            logger.debug(f"بررسی وضعیت کاربر {user_id}: is_new_user = {is_new}")
+            return is_new
+    except Exception as e:
+        logger.error(f"خطا در is_user_new برای کاربر {user_id}: {str(e)}")
+        return True
+
 def mark_user_as_old(user_id: int) -> None:
     try:
         with get_db_connection() as conn:
             cursor = conn.cursor()
-            # بررسی وجود ستون is_new_user
-            cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'is_new_user'")
-            if cursor.fetchone():
-                cursor.execute(
-                    "UPDATE users SET is_new_user = FALSE WHERE user_id = %s",
-                    (user_id,)
-                )
-                conn.commit()
-                logger.info(f"کاربر {user_id} به عنوان کاربر قدیمی علامت‌گذاری شد")
-            else:
-                logger.warning(f"ستون is_new_user برای کاربر {user_id} وجود ندارد")
+            cursor.execute(
+                "UPDATE users SET is_new_user = FALSE WHERE user_id = %s",
+                (user_id,)
+            )
+            conn.commit()
+            logger.info(f"کاربر {user_id} به عنوان کاربر قدیمی علامت‌گذاری شد")
     except Exception as e:
         logger.error(f"خطا در mark_user_as_old برای کاربر {user_id}: {str(e)}")
 
@@ -306,9 +266,7 @@ def record_payment(user_id: int, amount: int, card_number: str) -> int:
             return payment_id
     except Exception as e:
         logger.error(f"خطا در record_payment برای کاربر {user_id}: {str(e)}")
-        return 0
-
-def check_invitation(inviter_id: int, invitee_id: int) -> bool:
+        return 0def check_invitation(inviter_id: int, invitee_id: int) -> bool:
     try:
         with get_db_connection() as conn:
             cursor = conn.cursor()
@@ -426,13 +384,11 @@ async def check_channel_membership(user_id: int, context: ContextTypes) -> bool:
             
         for channel_id, channel_name in channels:
             try:
-                # بررسی ادمین بودن ربات
                 bot_member = await context.bot.get_chat_member(channel_id, context.bot.id)
                 if bot_member.status not in ['administrator', 'creator']:
                     logger.error(f"ربات در کانال {channel_id} ادمین نیست")
                     return False
                 
-                # بررسی عضویت کاربر
                 member = await context.bot.get_chat_member(channel_id, user_id)
                 if member.status not in ['member', 'administrator', 'creator']:
                     logger.info(f"کاربر {user_id} در کانال {channel_id} عضو نیست")
@@ -475,8 +431,7 @@ async def send_new_user_notification(user_id: int, username: str, context: Conte
     except Exception as e:
         logger.error(f"خطا در ارسال اطلاع‌رسانی کاربر جدید برای کاربر {user_id}: {str(e)}")
 
-# --------------------------- دستورات ادمین ---------------------------
-
+# دستورات ادمین
 async def debug(update: Update, context: ContextTypes):
     user_id = update.effective_user.id
     if user_id != ADMIN_ID:
@@ -484,11 +439,9 @@ async def debug(update: Update, context: ContextTypes):
         return
 
     try:
-        # بررسی اتصال دیتابیس
         db_status = check_db_connectivity()
         msg = f"🔍 وضعیت دیتابیس: {'متصل' if db_status else 'قطع'}\n\n"
 
-        # دریافت داده‌های خام
         with get_db_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT COUNT(*) FROM users")
@@ -501,16 +454,8 @@ async def debug(update: Update, context: ContextTypes):
             total_payments = cursor.fetchone()[0] or 0
             cursor.execute("SELECT COUNT(*) FROM channels")
             total_channels = cursor.fetchone()[0] or 0
-            
-            # بررسی وجود ستون is_new_user قبل از کوئری
-            cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'is_new_user'")
-            has_is_new_user = cursor.fetchone() is not None
-            if has_is_new_user:
-                cursor.execute("SELECT user_id, is_new_user FROM users LIMIT 5")
-                recent_users = cursor.fetchall()
-            else:
-                cursor.execute("SELECT user_id, username FROM users LIMIT 5")
-                recent_users = [(row[0], False) for row in cursor.fetchall()]  # اگر ستون وجود ندارد، فرض می‌کنیم همه قدیمی هستند
+            cursor.execute("SELECT user_id, username FROM users LIMIT 5")
+            recent_users = cursor.fetchall()
             conn.commit()
 
         msg += (
@@ -522,10 +467,9 @@ async def debug(update: Update, context: ContextTypes):
             f"📺 تعداد کانال‌ها: {total_channels}\n\n"
             f"👤 ۵ کاربر اخیر:\n"
         )
-        for user_id, is_new in recent_users:
-            msg += f"کاربر {user_id}: {'جدید' if is_new else 'قدیمی'}\n"
+        for user_id, username in recent_users:
+            msg += f"کاربر {user_id}: {username or 'بدون یوزرنیم'}\n"
 
-        # تست ارسال اعلان
         await context.bot.send_message(
             chat_id=ADMIN_ID,
             text="🔔 تست اعلان ادمین"
@@ -536,7 +480,7 @@ async def debug(update: Update, context: ContextTypes):
         logger.info(f"دستور /debug توسط ادمین {user_id} اجرا شد")
     except Exception as e:
         logger.error(f"خطا در debug برای کاربر {user_id}: {str(e)}")
-        await update.message.reply_text(f"❌ خطا در دیباグ: {str(e)}")
+        await update.message.reply_text(f"❌ خطا در دیباگ: {str(e)}")
 
 async def backup_db(update: Update, context: ContextTypes):
     user_id = update.effective_user.id
@@ -582,204 +526,6 @@ async def backup_db(update: Update, context: ContextTypes):
         logger.error(f"خطا در backup_db: {str(e)}")
         await update.message.reply_text(f"❌ خطا در ایجاد بکاپ: {str(e)}")
 
-async def restore_db(update: Update, context: ContextTypes):
-    user_id = update.effective_user.id
-    if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ شما اجازه انجام این عملیات را ندارید.")
-        return
-
-    await update.message.reply_text("📤 لطفاً فایل آخرین بکاپ دیتابیس را ارسال کنید:")
-    context.user_data["waiting_for_backup_file"] = True
-
-async def handle_backup_file(update: Update, context: ContextTypes):
-    user_id = update.effective_user.id
-    if user_id != ADMIN_ID or not context.user_data.get("waiting_for_backup_file"):
-        return
-
-    try:
-        # دریافت فایل بکاپ
-        document = update.message.document
-        if not document:
-            await update.message.reply_text("❌ لطفاً یک فایل بکاپ ارسال کنید.")
-            return
-
-        # دانلود فایل
-        file = await context.bot.get_file(document.file_id)
-        with tempfile.NamedTemporaryFile(mode="w+b", suffix=".json", delete=False) as temp_file:
-            await file.download_to_memory(temp_file)
-            temp_file.seek(0)
-            backup_data = json.load(temp_file)
-
-        # بازیابی داده‌ها
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            
-            # پاک کردن داده‌های موجود
-            cursor.execute("DELETE FROM users")
-            cursor.execute("DELETE FROM top_winners")
-            cursor.execute("DELETE FROM payments")
-            cursor.execute("DELETE FROM invitations")
-            cursor.execute("DELETE FROM channels")
-            
-            # درج داده‌های جدید - کاربران
-            users_inserted = 0
-            users_skipped = 0
-            for user in backup_data.get("users", []):
-                user_id_val = user.get("user_id")
-                if user_id_val is None:
-                    logger.warning("ردیف کاربر با user_id null نادیده گرفته شد")
-                    users_skipped += 1
-                    continue
-                    
-                try:
-                    cursor.execute(
-                        "INSERT INTO users (user_id, balance, invites, spins, total_earnings, card_number, last_action, username, pending_ref_id, is_new_user) "
-                        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (user_id) DO UPDATE SET "
-                        "balance = EXCLUDED.balance, invites = EXCLUDED.invites, spins = EXCLUDED.spins, "
-                        "total_earnings = EXCLUDED.total_earnings, card_number = EXCLUDED.card_number, "
-                        "last_action = EXCLUDED.last_action, username = EXCLUDED.username, "
-                        "pending_ref_id = EXCLUDED.pending_ref_id, is_new_user = EXCLUDED.is_new_user",
-                        (user_id_val, user.get("balance", 0), user.get("invites", 0), 
-                         user.get("spins", 2), user.get("total_earnings", 0), user.get("card_number"), 
-                         user.get("last_action"), user.get("username"), user.get("pending_ref_id"), 
-                         user.get("is_new_user", True))
-                    )
-                    users_inserted += 1
-                except Exception as e:
-                    logger.error(f"خطا در درج کاربر {user_id_val}: {str(e)}")
-                    users_skipped += 1
-            
-            # درج داده‌های جدید - برندگان برتر
-            winners_inserted = 0
-            winners_skipped = 0
-            for winner in backup_data.get("top_winners", []):
-                user_id_val = winner.get("user_id")
-                if user_id_val is None:
-                    logger.warning("ردیف برنده با user_id null نادیده گرفته شد")
-                    winners_skipped += 1
-                    continue
-                    
-                try:
-                    cursor.execute(
-                        "INSERT INTO top_winners (user_id, username, total_earnings, last_win) "
-                        "VALUES (%s, %s, %s, %s) ON CONFLICT (user_id) DO UPDATE SET "
-                        "username = EXCLUDED.username, total_earnings = EXCLUDED.total_earnings, last_win = EXCLUDED.last_win",
-                        (user_id_val, winner.get("username"), winner.get("total_earnings", 0), winner.get("last_win"))
-                    )
-                    winners_inserted += 1
-                except Exception as e:
-                    logger.error(f"خطا در درج برنده {user_id_val}: {str(e)}")
-                    winners_skipped += 1
-            
-            # درج داده‌های جدید - پرداخت‌ها
-            payments_inserted = 0
-            payments_skipped = 0
-            for payment in backup_data.get("payments", []):
-                payment_id_val = payment.get("payment_id")
-                user_id_val = payment.get("user_id")
-                
-                if user_id_val is None:
-                    logger.warning(f"ردیف پرداخت {payment_id_val} با user_id null نادیده گرفته شد")
-                    payments_skipped += 1
-                    continue
-                    
-                try:
-                    cursor.execute(
-                        "INSERT INTO payments (payment_id, user_id, amount, card_number, confirmed_at) "
-                        "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (payment_id) DO UPDATE SET "
-                        "user_id = EXCLUDED.user_id, amount = EXCLUDED.amount, card_number = EXCLUDED.card_number, "
-                        "confirmed_at = EXCLUDED.confirmed_at",
-                        (payment_id_val, user_id_val, payment.get("amount", 0), 
-                         payment.get("card_number"), payment.get("confirmed_at"))
-                    )
-                    payments_inserted += 1
-                except Exception as e:
-                    logger.error(f"خطا در درج پرداخت {payment_id_val}: {str(e)}")
-                    payments_skipped += 1
-            
-            # درج داده‌های جدید - دعوت‌ها
-            invitations_inserted = 0
-            invitations_skipped = 0
-            for invitation in backup_data.get("invitations", []):
-                inviter_id = invitation.get("inviter_id")
-                invitee_id = invitation.get("invitee_id")
-                
-                if inviter_id is None or invitee_id is None:
-                    logger.warning("ردیف دعوت با inviter_id یا invitee_id null نادیده گرفته شد")
-                    invitations_skipped += 1
-                    continue
-                    
-                try:
-                    cursor.execute(
-                        "INSERT INTO invitations (inviter_id, invitee_id, invited_at) "
-                        "VALUES (%s, %s, %s) ON CONFLICT (inviter_id, invitee_id) DO UPDATE SET "
-                        "invited_at = EXCLUDED.invited_at",
-                        (inviter_id, invitee_id, invitation.get("invited_at"))
-                    )
-                    invitations_inserted += 1
-                except Exception as e:
-                    logger.error(f"خطا در درج دعوت {inviter_id}-{invitee_id}: {str(e)}")
-                    invitations_skipped += 1
-            
-            # درج داده‌های جدید - کانال‌ها
-            channels_inserted = 0
-            channels_skipped = 0
-            for channel in backup_data.get("channels", []):
-                channel_id_val = channel.get("channel_id")
-                if channel_id_val is None:
-                    logger.warning("ردیف کانال با channel_id null نادیده گرفته شد")
-                    channels_skipped += 1
-                    continue
-                    
-                try:
-                    cursor.execute(
-                        "INSERT INTO channels (channel_id, channel_name, added_at) "
-                        "VALUES (%s, %s, %s) ON CONFLICT (channel_id) DO UPDATE SET "
-                        "channel_name = EXCLUDED.channel_name, added_at = EXCLUDED.added_at",
-                        (channel_id_val, channel.get("channel_name"), channel.get("added_at"))
-                    )
-                    channels_inserted += 1
-                except Exception as e:
-                    logger.error(f"خطا در درج کانال {channel_id_val}: {str(e)}")
-                    channels_skipped += 1
-            
-            conn.commit()
-
-        context.user_data["waiting_for_backup_file"] = False
-        
-        # تازه‌سازی اتصال دیتابیس
-        refresh_db_connection()
-        
-        # پاک کردن کش‌های محلی
-        if hasattr(context, 'user_data'):
-            context.user_data.clear()
-        
-        # ارسال گزارش بازیابی
-        report_msg = (
-            f"✅ دیتابیس با موفقیت بازیابی شد!\n\n"
-            f"📊 گزارش بازیابی:\n"
-            f"👥 کاربران: {users_inserted} درج شدند، {users_skipped} نادیده گرفته شدند\n"
-            f"🏆 برندگان: {winners_inserted} درج شدند، {winners_skipped} نادیده گرفته شدند\n"
-            f"💸 پرداخت‌ها: {payments_inserted} درج شدند، {payments_skipped} نادیده گرفته شدند\n"
-            f"📩 دعوت‌ها: {invitations_inserted} درج شدند، {invitations_skipped} نادیده گرفته شدند\n"
-            f"📺 کانال‌ها: {channels_inserted} درج شدند، {channels_skipped} نادیده گرفته شدند\n\n"
-            f"🔄 اطلاعات جدید اکنون در دسترس هستند. ممکن است نیاز باشد ربات را restart کنید."
-        )
-        
-        await update.message.reply_text(report_msg)
-        logger.info(f"دیتابیس توسط ادمین {user_id} بازیابی شد. گزارش: {report_msg}")
-
-        # تازه‌سازی اطلاعات ادمین
-        try:
-            get_or_create_user(ADMIN_ID, "admin")
-            logger.info("اطلاعات ادمین پس از بازیابی تازه‌سازی شد")
-        except Exception as e:
-            logger.error(f"خطا در تازه‌سازی اطلاعات ادمین: {str(e)}")
-
-    except Exception as e:
-        logger.error(f"خطا در بازیابی دیتابیس: {str(e)}")
-        await update.message.reply_text(f"❌ خطا در بازیابی دیتابیس: {str(e)}")
-
 async def clear_db(update: Update, context: ContextTypes):
     user_id = update.effective_user.id
     if user_id != ADMIN_ID:
@@ -793,14 +539,15 @@ async def clear_db(update: Update, context: ContextTypes):
             cursor.execute("DELETE FROM top_winners")
             cursor.execute("DELETE FROM payments")
             cursor.execute("DELETE FROM invitations")
+            cursor.execute("DELETE FROM channels")
             conn.commit()
         await update.message.reply_text("✅ دیتابیس با موفقیت پاک شد.")
         logger.info("دیتابیس با موفقیت پاک شد")
+        init_db()  # بازسازی کانال پیش‌فرض
     except Exception as e:
         logger.error(f"خطا در clear_db: {str(e)}")
         await update.message.reply_text(f"❌ خطا در پاک کردن دیتابیس: {str(e)}")
 
-@retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
 async def stats(update: Update, context: ContextTypes):
     user_id = update.effective_user.id
     if user_id != ADMIN_ID:
@@ -808,42 +555,18 @@ async def stats(update: Update, context: ContextTypes):
         return
 
     try:
-        # تازه‌سازی اتصال دیتابیس
-        refresh_db_connection()
-
         with get_db_connection() as conn:
             cursor = conn.cursor()
-            
-            # تعداد کل کاربران
             cursor.execute("SELECT COUNT(*) FROM users")
             total_users = cursor.fetchone()[0] or 0
-            logger.debug(f"Stats: total_users = {total_users}")
-            
-            # تعداد کاربران فعال (کاربرانی که در 24 ساعت گذشته فعالیت داشته‌اند)
-            cursor.execute("SELECT COUNT(*) FROM users WHERE last_action >= NOW() - INTERVAL '24 hours'")
-            active_users = cursor.fetchone()[0] or 0
-            logger.debug(f"Stats: active_users = {active_users}")
-            
-            # تعداد کل دعوت‌ها
             cursor.execute("SELECT COALESCE(SUM(invites), 0) FROM users")
             total_invites = cursor.fetchone()[0] or 0
-            logger.debug(f"Stats: total_invites = {total_invites}")
-            
-            # مجموع درآمد کاربران
             cursor.execute("SELECT COALESCE(SUM(total_earnings), 0) FROM users")
             total_earnings = cursor.fetchone()[0] or 0
-            logger.debug(f"Stats: total_earnings = {total_earnings}")
-            
-            # تعداد پرداخت‌های تأییدشده
             cursor.execute("SELECT COUNT(*) FROM payments")
             total_payments = cursor.fetchone()[0] or 0
-            logger.debug(f"Stats: total_payments = {total_payments}")
-            
-            # تعداد کانال‌های اجباری
             cursor.execute("SELECT COUNT(*) FROM channels")
             total_channels = cursor.fetchone()[0] or 0
-            logger.debug(f"Stats: total_channels = {total_channels}")
-            
             conn.commit()
 
         msg = (
@@ -895,7 +618,7 @@ async def user_info(update: Update, context: ContextTypes):
             await update.message.reply_text(msg)
             await asyncio.sleep(0.5)
 
-        logger.info("اطلاعات пользователей برای ادمین ارسال شد")
+        logger.info("اطلاعات کاربران برای ادمین ارسال شد")
     except Exception as e:
         logger.error(f"خطا در user_info: {str(e)}")
         await update.message.reply_text(f"❌ خطا در دریافت اطلاعات کاربران: {str(e)}")
@@ -921,8 +644,7 @@ async def list_channels(update: Update, context: ContextTypes):
     ]
     await update.message.reply_text(msg, reply_markup=InlineKeyboardMarkup(keyboard))
 
-# --------------------------- کیبوردها ---------------------------
-
+# کیبوردها
 def chat_menu():
     keyboard = [
         [KeyboardButton("🎯 چرخوندن گردونه"), KeyboardButton("💰 موجودی")],
@@ -953,16 +675,12 @@ def remove_channel_keyboard(channels):
     keyboard = [[InlineKeyboardButton(f"حذف {channel_name} ({channel_id})", callback_data=f"delete_channel_{channel_id}")]
                 for channel_id, channel_name in channels]
     keyboard.append([InlineKeyboardButton("🔙 بازگشت", callback_data="back_to_channel_menu")])
-    return InlineKeyboardMarkup(keyboard)
-
-# --------------------------- هندلرها ---------------------------
-
+    return InlineKeyboardMarkup(keyboard)# دستورات اصلی
 async def start(update: Update, context: ContextTypes):
     user = update.effective_user
     logger.debug(f"دستور /start توسط کاربر {user.id} اجرا شد")
     
     try:
-        # ذخیره یا به‌روزرسانی اطلاعات کاربر
         get_or_create_user(user.id, user.username)
     except Exception as e:
         logger.error(f"خطا در ایجاد/دریافت کاربر {user.id}: {str(e)}")
@@ -973,10 +691,8 @@ async def start(update: Update, context: ContextTypes):
         return
 
     try:
-        # بررسی عضویت در کانال‌ها
         is_member = await check_channel_membership(user.id, context)
         if not is_member:
-            # ذخیره لینک دعوت اگر وجود دارد
             if context.args:
                 try:
                     ref_id = int(context.args[0])
@@ -988,7 +704,6 @@ async def start(update: Update, context: ContextTypes):
                 except Exception as e:
                     logger.error(f"خطا در ذخیره لینک دعوت برای کاربر {user.id}: {str(e)}")
             
-            # نمایش دکمه عضویت اینلاین
             channels = get_channels()
             if channels:
                 channel_links = "\n".join([f"• {channel_id}" for channel_id, channel_name in channels])
@@ -1000,7 +715,6 @@ async def start(update: Update, context: ContextTypes):
                     reply_markup=membership_check_keyboard()
                 )
             else:
-                # اگر هیچ کانال اجباری وجود ندارد
                 if is_user_new(user.id):
                     await send_new_user_notification(user.id, user.username, context)
                     mark_user_as_old(user.id)
@@ -1024,7 +738,6 @@ async def start(update: Update, context: ContextTypes):
         )
         return
 
-    # پردازش لینک دعوت (اگر کانال اجباری وجود ندارد)
     try:
         if context.args:
             try:
@@ -1049,7 +762,6 @@ async def start(update: Update, context: ContextTypes):
             except Exception as e:
                 logger.error(f"خطا در پردازش دعوت برای کاربر {user.id}: {str(e)}")
         
-        # پردازش لینک دعوت ذخیره شده
         pending_ref = get_pending_ref(user.id)
         if pending_ref and pending_ref != user.id and not check_invitation(pending_ref, user.id):
             try:
@@ -1108,6 +820,238 @@ async def menu(update: Update, context: ContextTypes):
             reply_markup=chat_menu()
         )
         return
+
+# سیستم جدید ریستور
+async def restore_db(update: Update, context: ContextTypes):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ شما اجازه انجام این عملیات را ندارید.")
+        return
+
+    await update.message.reply_text("📤 لطفاً فایل بکاپ دیتابیس (JSON) را ارسال کنید:")
+    context.user_data["waiting_for_backup_file"] = True
+
+async def handle_backup_file(update: Update, context: ContextTypes):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID or not context.user_data.get("waiting_for_backup_file"):
+        await update.message.reply_text("❌ شما اجازه انجام این عملیات را ندارید یا در انتظار فایل بکاپ نیستید.")
+        return
+
+    try:
+        document = update.message.document
+        if not document or not document.file_name.endswith('.json'):
+            await update.message.reply_text("❌ لطفاً یک فایل JSON معتبر ارسال کنید.")
+            return
+
+        file = await context.bot.get_file(document.file_id)
+        with tempfile.NamedTemporaryFile(mode="w+b", suffix=".json", delete=False) as temp_file:
+            await file.download_to_memory(temp_file)
+            temp_file.seek(0)
+            backup_data = json.load(temp_file)
+
+        # پاک کردن دیتابیس موجود
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM users")
+            cursor.execute("DELETE FROM top_winners")
+            cursor.execute("DELETE FROM payments")
+            cursor.execute("DELETE FROM invitations")
+            cursor.execute("DELETE FROM channels")
+            conn.commit()
+            logger.info("دیتابیس موجود پاک شد")
+
+        # بازیابی داده‌ها
+        users_inserted = users_skipped = 0
+        winners_inserted = winners_skipped = 0
+        payments_inserted = payments_skipped = 0
+        invitations_inserted = invitations_skipped = 0
+        channels_inserted = channels_skipped = 0
+
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            # درج کاربران
+            for user in backup_data.get("users", []):
+                user_id_val = user.get("user_id")
+                if user_id_val is None:
+                    logger.warning("ردیف کاربر با user_id null نادیده گرفته شد")
+                    users_skipped += 1
+                    continue
+                try:
+                    cursor.execute(
+                        """
+                        INSERT INTO users (
+                            user_id, balance, invites, spins, total_earnings, 
+                            card_number, last_action, username, pending_ref_id, is_new_user
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        (
+                            user_id_val,
+                            user.get("balance", 0),
+                            user.get("invites", 0),
+                            user.get("spins", 2),
+                            user.get("total_earnings", 0),
+                            user.get("card_number"),
+                            user.get("last_action"),
+                            user.get("username"),
+                            user.get("pending_ref_id"),
+                            user.get("is_new_user", True)
+                        )
+                    )
+                    users_inserted += 1
+                except Exception as e:
+                    logger.error(f"خطا در درج کاربر {user_id_val}: {str(e)}")
+                    users_skipped += 1
+
+            # درج برندگان برتر
+            for winner in backup_data.get("top_winners", []):
+                user_id_val = winner.get("user_id")
+                if user_id_val is None:
+                    logger.warning("ردیف برنده با user_id null نادیده گرفته شد")
+                    winners_skipped += 1
+                    continue
+                try:
+                    cursor.execute(
+                        """
+                        INSERT INTO top_winners (user_id, username, total_earnings, last_win)
+                        VALUES (%s, %s, %s, %s)
+                        """,
+                        (
+                            user_id_val,
+                            winner.get("username"),
+                            winner.get("total_earnings", 0),
+                            winner.get("last_win")
+                        )
+                    )
+                    winners_inserted += 1
+                except Exception as e:
+                    logger.error(f"خطا در درج برنده {user_id_val}: {str(e)}")
+                    winners_skipped += 1
+
+            # درج پرداخت‌ها
+            for payment in backup_data.get("payments", []):
+                payment_id_val = payment.get("payment_id")
+                user_id_val = payment.get("user_id")
+                if user_id_val is None:
+                    logger.warning(f"ردیف پرداخت {payment_id_val} با user_id null نادیده گرفته شد")
+                    payments_skipped += 1
+                    continue
+                try:
+                    cursor.execute(
+                        """
+                        INSERT INTO payments (payment_id, user_id, amount, card_number, confirmed_at)
+                        VALUES (%s, %s, %s, %s, %s)
+                        """,
+                        (
+                            payment_id_val,
+                            user_id_val,
+                            payment.get("amount", 0),
+                            payment.get("card_number"),
+                            payment.get("confirmed_at")
+                        )
+                    )
+                    payments_inserted += 1
+                except Exception as e:
+                    logger.error(f"خطا در درج پرداخت {payment_id_val}: {str(e)}")
+                    payments_skipped += 1
+
+            # درج دعوت‌ها
+            for invitation in backup_data.get("invitations", []):
+                inviter_id = invitation.get("inviter_id")
+                invitee_id = invitation.get("invitee_id")
+                if inviter_id is None or invitee_id is None:
+                    logger.warning("ردیف دعوت با inviter_id یا invitee_id null نادیده گرفته شد")
+                    invitations_skipped += 1
+                    continue
+                try:
+                    cursor.execute(
+                        """
+                        INSERT INTO invitations (inviter_id, invitee_id, invited_at)
+                        VALUES (%s, %s, %s)
+                        """,
+                        (inviter_id, invitee_id, invitation.get("invited_at"))
+                    )
+                    invitations_inserted += 1
+                except Exception as e:
+                    logger.error(f"خطا در درج دعوت {inviter_id}-{invitee_id}: {str(e)}")
+                    invitations_skipped += 1
+
+            # درج کانال‌ها
+            for channel in backup_data.get("channels", []):
+                channel_id_val = channel.get("channel_id")
+                if channel_id_val is None:
+                    logger.warning("ردیف کانال با channel_id null نادیده گرفته شد")
+                    channels_skipped += 1
+                    continue
+                try:
+                    cursor.execute(
+                        """
+                        INSERT INTO channels (channel_id, channel_name, added_at)
+                        VALUES (%s, %s, %s)
+                        """,
+                        (
+                            channel_id_val,
+                            channel.get("channel_name"),
+                            channel.get("added_at")
+                        )
+                    )
+                    channels_inserted += 1
+                except Exception as e:
+                    logger.error(f"خطا در درج کانال {channel_id_val}: {str(e)}")
+                    channels_skipped += 1
+
+            conn.commit()
+
+        # گزارش بازیابی
+        report_msg = (
+            f"✅ دیتابیس با موفقیت بازیابی شد!\n\n"
+            f"📊 گزارش بازیابی:\n"
+            f"👥 کاربران: {users_inserted} درج شدند، {users_skipped} نادیده گرفته شدند\n"
+            f"🏆 برندگان: {winners_inserted} درج شدند، {winners_skipped} نادیده گرفته شدند\n"
+            f"💸 پرداخت‌ها: {payments_inserted} درج شدند، {payments_skipped} نادیده گرفته شدند\n"
+            f"📩 دعوت‌ها: {invitations_inserted} درج شدند، {invitations_skipped} نادیده گرفته شدند\n"
+            f"📺 کانال‌ها: {channels_inserted} درج شدند، {channels_skipped} نادیده گرفته شدند\n\n"
+        )
+
+        # نمایش اطلاعات بازیابی‌شده
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT user_id, username, balance, invites FROM users ORDER BY user_id LIMIT 5")
+            users = cursor.fetchall()
+            cursor.execute("SELECT user_id, total_earnings FROM top_winners ORDER BY total_earnings DESC LIMIT 5")
+            winners = cursor.fetchall()
+            cursor.execute("SELECT channel_id, channel_name FROM channels ORDER BY added_at")
+            channels = cursor.fetchall()
+            conn.commit()
+
+        report_msg += "📋 نمونه داده‌های بازیابی‌شده:\n\n"
+        report_msg += "👥 ۵ کاربر اول:\n"
+        for user in users:
+            user_id, username, balance, invites = user
+            username_display = f"@{username}" if username else "بدون یوزرنیم"
+            report_msg += f"کاربر {user_id}: {username_display}، موجودی: {balance:,}، دعوت‌ها: {invites}\n"
+        
+        report_msg += "\n🏆 ۵ برنده برتر:\n"
+        for winner in winners:
+            user_id, total_earnings = winner
+            report_msg += f"کاربر {user_id}: {total_earnings:,} تومان\n"
+        
+        report_msg += "\n📺 کانال‌ها:\n"
+        for i, (channel_id, channel_name) in enumerate(channels, 1):
+            report_msg += f"{i}. {channel_name} ({channel_id})\n"
+
+        report_msg += "\n🔄 اطلاعات جدید اکنون در دسترس هستند."
+
+        context.user_data["waiting_for_backup_file"] = False
+        await update.message.reply_text(report_msg)
+        logger.info(f"دیتابیس توسط ادمین {user_id} بازیابی شد. گزارش: {report_msg}")
+
+        # بازسازی کانال پیش‌فرض اگر وجود ندارد
+        init_db()
+
+    except Exception as e:
+        logger.error(f"خطا در بازیابی دیتابیس: {str(e)}")
+        await update.message.reply_text(f"❌ خطا در بازیابی دیتابیس: {str(e)}")
+        context.user_data["waiting_for_backup_file"] = False
 
 async def spin_wheel(user_id: int, context: ContextTypes) -> tuple:
     try:
@@ -1183,13 +1127,11 @@ async def callback_handler(update: Update, context: ContextTypes):
                     )
                 return
             
-            # ارسال اطلاع‌رسانی برای کاربر جدید
             if is_user_new(user_id):
                 await send_new_user_notification(user_id, query.from_user.username, context)
                 mark_user_as_old(user_id)
                 logger.debug(f"کاربر {user_id} اطلاع‌رسانی شد و به عنوان قدیمی علامت‌گذاری شد")
 
-            # پردازش لینک دعوت ذخیره شده
             pending_ref = get_pending_ref(user_id)
             if pending_ref and pending_ref != user_id and not check_invitation(pending_ref, user.id):
                 try:
@@ -1229,15 +1171,7 @@ async def callback_handler(update: Update, context: ContextTypes):
                     reply_markup=membership_check_keyboard()
                 )
             return
-    except Exception as e:
-        logger.error(f"خطای بررسی عضویت در callback برای کاربر {user_id}: {str(e)}")
-        await query.message.reply_text(
-            f"⚠️ خطایی در بررسی عضویت رخ داد: {str(e)}. لطفاً دوباره امتحان کنید.",
-            reply_markup=chat_menu()
-        )
-        return
 
-    try:
         if query.data == "back":
             context.user_data.clear()
             await query.message.reply_text("منوی اصلی:", reply_markup=chat_menu())
@@ -1402,7 +1336,6 @@ async def callback_handler(update: Update, context: ContextTypes):
                 )
 
         elif query.data.startswith("confirm_payment_"):
-            logger.debug(f"Processing confirm_payment callback: {query.data}")
             try:
                 parts = query.data.split("_")
                 if len(parts) != 4:
@@ -1653,8 +1586,6 @@ async def handle_messages(update: Update, context: ContextTypes):
             reply_markup=chat_menu()
         )
 
-# --------------------------- هندلر فایل برای restore ---------------------------
-
 async def handle_document(update: Update, context: ContextTypes):
     user_id = update.effective_user.id
     if user_id != ADMIN_ID or not context.user_data.get("waiting_for_backup_file"):
@@ -1662,8 +1593,7 @@ async def handle_document(update: Update, context: ContextTypes):
     
     await handle_backup_file(update, context)
 
-# --------------------------- ثبت هندلرها و تنظیم منوی ربات ---------------------------
-
+# ثبت هندلرها و تنظیم منوی ربات
 application = ApplicationBuilder().token(TOKEN).build()
 
 async def set_menu_commands(application):
@@ -1696,8 +1626,7 @@ application.add_handler(CallbackQueryHandler(callback_handler))
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_messages))
 application.add_handler(MessageHandler(filters.Document.ALL, handle_document))
 
-# --------------------------- وب‌هوک FastAPI ---------------------------
-
+# وب‌هوک FastAPI
 @app.on_event("startup")
 async def on_startup():
     try:
