@@ -536,7 +536,7 @@ async def debug(update: Update, context: ContextTypes):
         logger.info(f"دستور /debug توسط ادمین {user_id} اجرا شد")
     except Exception as e:
         logger.error(f"خطا در debug برای کاربر {user_id}: {str(e)}")
-        await update.message.reply_text(f"❌ خطا در دیباグ: {str(e)}")
+        await update.message.reply_text(f"❌ خطا در دیباگ: {str(e)}")
 
 async def backup_db(update: Update, context: ContextTypes):
     user_id = update.effective_user.id
@@ -895,7 +895,7 @@ async def user_info(update: Update, context: ContextTypes):
             await update.message.reply_text(msg)
             await asyncio.sleep(0.5)
 
-        logger.info("اطلاعات пользователей برای ادمین ارسال شد")
+        logger.info("اطلاعات کاربران برای ادمین ارسال شد")
     except Exception as e:
         logger.error(f"خطا در user_info: {str(e)}")
         await update.message.reply_text(f"❌ خطا در دریافت اطلاعات کاربران: {str(e)}")
@@ -920,6 +920,21 @@ async def list_channels(update: Update, context: ContextTypes):
         [InlineKeyboardButton("🔙 بازگشت به منو", callback_data="back")]
     ]
     await update.message.reply_text(msg, reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def gift_users(update: Update, context: ContextTypes):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ شما اجازه انجام این عملیات را ندارید.")
+        return
+
+    keyboard = [
+        [InlineKeyboardButton("✅ بله", callback_data="confirm_gift_yes")],
+        [InlineKeyboardButton("❌ خیر", callback_data="confirm_gift_no")]
+    ]
+    await update.message.reply_text(
+        "🎁 آیا می‌خواهید هدیه (یک فرصت گردونه) به همه کاربران ارسال شود؟",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
 
 # --------------------------- کیبوردها ---------------------------
 
@@ -1029,7 +1044,7 @@ async def start(update: Update, context: ContextTypes):
         if context.args:
             try:
                 ref_id = int(context.args[0])
-                if ref_id != user.id and not check_invitation(ref_id, user.id):
+                if ref_id != user.id and is_user_new(user.id) and not check_invitation(ref_id, user.id):
                     with get_db_connection() as conn:
                         cursor = conn.cursor()
                         cursor.execute("SELECT user_id FROM users WHERE user_id = %s", (ref_id,))
@@ -1051,7 +1066,7 @@ async def start(update: Update, context: ContextTypes):
         
         # پردازش لینک دعوت ذخیره شده
         pending_ref = get_pending_ref(user.id)
-        if pending_ref and pending_ref != user.id and not check_invitation(pending_ref, user.id):
+        if pending_ref and pending_ref != user.id and is_user_new(user.id) and not check_invitation(pending_ref, user.id):
             try:
                 with get_db_connection() as conn:
                     cursor = conn.cursor()
@@ -1129,7 +1144,7 @@ async def spin_wheel(user_id: int, context: ContextTypes) -> tuple:
 
         amount = random.choices(
             [random.randint(20000, 50000), random.randint(50001, 100000), random.randint(100001, 300000)],
-            weights=[70, 25, 5],
+            weights=[85, 13, 2],
             k=1
         )[0]
         
@@ -1191,7 +1206,7 @@ async def callback_handler(update: Update, context: ContextTypes):
 
             # پردازش لینک دعوت ذخیره شده
             pending_ref = get_pending_ref(user_id)
-            if pending_ref and pending_ref != user_id and not check_invitation(pending_ref, user.id):
+            if pending_ref and pending_ref != user_id and is_user_new(user_id) and not check_invitation(pending_ref, user.id):
                 try:
                     with get_db_connection() as conn:
                         cursor = conn.cursor()
@@ -1434,6 +1449,43 @@ async def callback_handler(update: Update, context: ContextTypes):
             except Exception as e:
                 logger.error(f"خطا در تأیید پرداخت برای کاربر {target_user_id}: {str(e)}")
                 await query.message.reply_text(f"❌ خطا در تأیید پرداخت: {str(e)}")
+
+        elif query.data == "confirm_gift_yes":
+            if user_id != ADMIN_ID:
+                await query.message.reply_text("❌ شما اجازه انجام این عملیات را ندارید.")
+                return
+            try:
+                with get_db_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT user_id FROM users")
+                    all_users = cursor.fetchall()
+                    conn.commit()
+
+                gifted_count = 0
+                for (uid,) in all_users:
+                    if uid != ADMIN_ID:  # ادمین رو هدیه نده
+                        update_spins(uid, 1)
+                        try:
+                            await context.bot.send_message(
+                                uid,
+                                "🎁 هدیه از طرف ادمین! یک فرصت گردونه اضافی به شما داده شد. از گردونه شانس لذت ببر! 🚀"
+                            )
+                            gifted_count += 1
+                        except TelegramError as te:
+                            logger.warning(f"نتوانست به کاربر {uid} پیام هدیه بفرستد: {str(te)}")
+                        await asyncio.sleep(0.1)  # برای جلوگیری از rate limit
+
+                await query.message.edit_text(
+                    f"✅ هدیه با موفقیت به {gifted_count} کاربر ارسال شد!",
+                    reply_markup=None
+                )
+                logger.info(f"هدیه به {gifted_count} کاربر ارسال شد")
+            except Exception as e:
+                logger.error(f"خطا در ارسال هدیه: {str(e)}")
+                await query.message.edit_text(f"❌ خطا در ارسال هدیه: {str(e)}")
+
+        elif query.data == "confirm_gift_no":
+            await query.message.edit_text("❌ عملیات هدیه لغو شد.", reply_markup=chat_menu())
 
     except Exception as e:
         logger.error(f"خطای هندلر callback برای کاربر {user_id}: {str(e)}")
@@ -1678,7 +1730,8 @@ async def set_menu_commands(application):
         BotCommand(command="/stats", description="آمار ربات (ادمین)"),
         BotCommand(command="/user_info", description="اطلاعات کاربران (ادمین)"),
         BotCommand(command="/list_channels", description="مدیریت کانال‌های اجباری (ادمین)"),
-        BotCommand(command="/debug", description="دیباگ وضعیت ربات (ادمین)")
+        BotCommand(command="/debug", description="دیباگ وضعیت ربات (ادمین)"),
+        BotCommand(command="/gift_users", description="هدیه به کاربران (ادمین)")
     ]
     await application.bot.set_my_commands(user_commands, scope=BotCommandScopeDefault())
     await application.bot.set_my_commands(admin_commands, scope=BotCommandScopeChat(chat_id=ADMIN_ID))
@@ -1692,6 +1745,7 @@ application.add_handler(CommandHandler("stats", stats))
 application.add_handler(CommandHandler("user_info", user_info))
 application.add_handler(CommandHandler("list_channels", list_channels))
 application.add_handler(CommandHandler("debug", debug))
+application.add_handler(CommandHandler("gift_users", gift_users))
 application.add_handler(CallbackQueryHandler(callback_handler))
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_messages))
 application.add_handler(MessageHandler(filters.Document.ALL, handle_document))
