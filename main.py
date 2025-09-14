@@ -522,8 +522,8 @@ async def debug(update: Update, context: ContextTypes):
             f"📺 تعداد کانال‌ها: {total_channels}\n\n"
             f"👤 ۵ کاربر اخیر:\n"
         )
-        for user_id, is_new in recent_users:
-            msg += f"کاربر {user_id}: {'جدید' if is_new else 'قدیمی'}\n"
+        for user_id_val, is_new in recent_users:
+            msg += f"کاربر {user_id_val}: {'جدید' if is_new else 'قدیمی'}\n"
 
         # تست ارسال اعلان
         await context.bot.send_message(
@@ -882,11 +882,11 @@ async def user_info(update: Update, context: ContextTypes):
         for i in range(0, len(users), users_per_message):
             msg = f"📋 اطلاعات کاربران (بخش {i // users_per_message + 1}):\n\n"
             for user in users[i:i + users_per_message]:
-                user_id = user[0]
+                user_id_val = user[0]
                 username, balance, invites = user[1], user[2], user[3]
                 username_display = f"@{username}" if username else "بدون یوزرنیم"
                 msg += (
-                    f"👤 آیدی عددی: {user_id}\n"
+                    f"👤 آیدی عددی: {user_id_val}\n"
                     f"📛 یوزرنیم: {username_display}\n"
                     f"💰 موجودی: {balance:,} تومان\n"
                     f"👥 دعوت‌ها: {invites} نفر\n"
@@ -1018,7 +1018,6 @@ async def start(update: Update, context: ContextTypes):
                 # اگر هیچ کانال اجباری وجود ندارد
                 if is_user_new(user.id):
                     await send_new_user_notification(user.id, user.username, context)
-                    mark_user_as_old(user.id)
                 await update.message.reply_text(
                     "👋 سلام! به ربات خوش آمدید!",
                     reply_markup=chat_menu()
@@ -1201,31 +1200,32 @@ async def callback_handler(update: Update, context: ContextTypes):
             # ارسال اطلاع‌رسانی برای کاربر جدید
             if is_user_new(user_id):
                 await send_new_user_notification(user_id, query.from_user.username, context)
+
+                # پردازش لینک دعوت ذخیره شده
+                pending_ref = get_pending_ref(user_id)
+                if pending_ref and pending_ref != user_id and is_user_new(user_id) and not check_invitation(pending_ref, user_id):
+                    try:
+                        with get_db_connection() as conn:
+                            cursor = conn.cursor()
+                            cursor.execute("SELECT user_id FROM users WHERE user_id = %s", (pending_ref,))
+                            referrer = cursor.fetchone()
+                            if referrer:
+                                update_spins(pending_ref, INVITE_REWARD)
+                                cursor.execute("UPDATE users SET invites = invites + 1 WHERE user_id = %s", (pending_ref,))
+                                record_invitation(pending_ref, user_id)
+                                conn.commit()
+                                logger.info(f"کاربر {user_id} از طریق دعوت ذخیره شده {pending_ref} ثبت شد")
+                                await context.bot.send_message(
+                                    pending_ref,
+                                    "🎉 یه نفر با لینک دعوتت به گردونه شانس پیوست! یه فرصت گردونه برات اضافه شد! 🚀"
+                                )
+                        clear_pending_ref(user_id)
+                    except Exception as e:
+                        logger.error(f"خطا در پردازش لینک دعوت ذخیره شده در callback برای کاربر {user_id}: {str(e)}")
+
                 mark_user_as_old(user_id)
                 logger.debug(f"کاربر {user_id} اطلاع‌رسانی شد و به عنوان قدیمی علامت‌گذاری شد")
 
-            # پردازش لینک دعوت ذخیره شده
-            pending_ref = get_pending_ref(user_id)
-            if pending_ref and pending_ref != user_id and is_user_new(user_id) and not check_invitation(pending_ref, user_id):
-                try:
-                    with get_db_connection() as conn:
-                        cursor = conn.cursor()
-                        cursor.execute("SELECT user_id FROM users WHERE user_id = %s", (pending_ref,))
-                        referrer = cursor.fetchone()
-                        if referrer:
-                            update_spins(pending_ref, INVITE_REWARD)
-                            cursor.execute("UPDATE users SET invites = invites + 1 WHERE user_id = %s", (pending_ref,))
-                            record_invitation(pending_ref, user_id)
-                            conn.commit()
-                            logger.info(f"کاربر {user_id} از طریق دعوت ذخیره شده {pending_ref} ثبت شد")
-                            await context.bot.send_message(
-                                pending_ref,
-                                "🎉 یه نفر با لینک دعوتت به گردونه شانس پیوست! یه فرصت گردونه برات اضافه شد! 🚀"
-                            )
-                    clear_pending_ref(user_id)
-                except Exception as e:
-                    logger.error(f"خطا در پردازش لینک دعوت ذخیره شده در callback برای کاربر {user_id}: {str(e)}")
-            
             await query.message.edit_text(
                 "✅ عضویت شما تأیید شد!\n\n"
                 "🎉 خوش اومدی به گردونه شانس!\n\n"
