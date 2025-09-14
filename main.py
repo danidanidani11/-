@@ -1206,7 +1206,7 @@ async def callback_handler(update: Update, context: ContextTypes):
 
             # پردازش لینک دعوت ذخیره شده
             pending_ref = get_pending_ref(user_id)
-            if pending_ref and pending_ref != user_id and is_user_new(user_id) and not check_invitation(pending_ref, user.id):
+            if pending_ref and pending_ref != user_id and is_user_new(user_id) and not check_invitation(pending_ref, user_id):
                 try:
                     with get_db_connection() as conn:
                         cursor = conn.cursor()
@@ -1215,16 +1215,16 @@ async def callback_handler(update: Update, context: ContextTypes):
                         if referrer:
                             update_spins(pending_ref, INVITE_REWARD)
                             cursor.execute("UPDATE users SET invites = invites + 1 WHERE user_id = %s", (pending_ref,))
-                            record_invitation(pending_ref, user.id)
+                            record_invitation(pending_ref, user_id)
                             conn.commit()
-                            logger.info(f"کاربر {user.id} از طریق دعوت ذخیره شده {pending_ref} ثبت شد")
+                            logger.info(f"کاربر {user_id} از طریق دعوت ذخیره شده {pending_ref} ثبت شد")
                             await context.bot.send_message(
                                 pending_ref,
                                 "🎉 یه نفر با لینک دعوتت به گردونه شانس پیوست! یه فرصت گردونه برات اضافه شد! 🚀"
                             )
-                    clear_pending_ref(user.id)
+                    clear_pending_ref(user_id)
                 except Exception as e:
-                    logger.error(f"خطا در پردازش لینک دعوت ذخیره شده در callback برای کاربر {user.id}: {str(e)}")
+                    logger.error(f"خطا در پردازش لینک دعوت ذخیره شده در callback برای کاربر {user_id}: {str(e)}")
             
             await query.message.edit_text(
                 "✅ عضویت شما تأیید شد!\n\n"
