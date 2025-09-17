@@ -878,24 +878,32 @@ async def user_info(update: Update, context: ContextTypes):
             await update.message.reply_text("📉 هیچ کاربری ثبت نشده است.")
             return
 
-        users_per_message = 50
-        for i in range(0, len(users), users_per_message):
-            msg = f"📋 اطلاعات کاربران (بخش {i // users_per_message + 1}):\n\n"
-            for user in users[i:i + users_per_message]:
+        # ارسال اطلاعات کاربران در چندین پیام
+        users_per_message = 20  # تعداد کاربران در هر پیام
+        total_users = len(users)
+        total_messages = (total_users + users_per_message - 1) // users_per_message
+
+        for i in range(total_messages):
+            start_index = i * users_per_message
+            end_index = min((i + 1) * users_per_message, total_users)
+            
+            msg = f"📋 اطلاعات کاربران (صفحه {i + 1} از {total_messages}):\n\n"
+            for user in users[start_index:end_index]:
                 user_id_val = user[0]
                 username, balance, invites = user[1], user[2], user[3]
                 username_display = f"@{username}" if username else "بدون یوزرنیم"
                 msg += (
-                    f"👤 آیدی عددی: {user_id_val}\n"
+                    f"👤 آیدی: {user_id_val}\n"
                     f"📛 یوزرنیم: {username_display}\n"
                     f"💰 موجودی: {balance:,} تومان\n"
                     f"👥 دعوت‌ها: {invites} نفر\n"
                     f"{'-' * 20}\n"
                 )
+            
             await update.message.reply_text(msg)
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.5)  # تاخیر برای جلوگیری از محدودیت تلگرام
 
-        logger.info("اطلاعات کاربران برای ادمین ارسال شد")
+        logger.info(f"اطلاعات {total_users} کاربر برای ادمین ارسال شد در {total_messages} پیام")
     except Exception as e:
         logger.error(f"خطا در user_info: {str(e)}")
         await update.message.reply_text(f"❌ خطا در دریافت اطلاعات کاربران: {str(e)}")
